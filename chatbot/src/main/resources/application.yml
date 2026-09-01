@@ -1,0 +1,38 @@
+#spring:
+#  application:
+#    name: chatbot
+#
+#  # Banco H2 em Memória
+#  datasource:
+#    url: jdbc:h2:mem:chatbotdb
+#    driver-class-name: org.h2.Driver
+#    username: sa
+#    password: ''
+#  jpa:
+#    database-platform: org.hibernate.dialect.H2Dialect
+#  h2:
+#    console:
+#      enabled: true
+
+spring:
+  application:
+    name: payment-api
+  datasource:
+    url: jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+    username: neondb_owner
+    password: ${NEON_DB_PASSWORD:npg_lZhcVq9WadG0}
+    driver-class-name: org.postgresql.Driver
+  output:
+    ansi:
+      enabled: Always
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+whatsapp:
+  api:
+    verify-token: ${WHATSAPP_VERIFY_TOKEN:meu_token_secreto_123}
