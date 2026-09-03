@@ -36,3 +36,7 @@ spring:
 whatsapp:
   api:
     verify-token: ${WHATSAPP_VERIFY_TOKEN:meu_token_secreto_123}
+
+tesseract:
+  datapath: C:/tessdata
+  language: por

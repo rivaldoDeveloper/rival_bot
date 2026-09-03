@@ -2,24 +2,26 @@ package com.rival.chatbot.service;
 
 import com.rival.chatbot.domain.NlpIntentEntity;
 import com.rival.chatbot.repository.NlpIntentRepository;
+import com.rival.chatbot.util.TextNormalizerUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
-import java.text.Normalizer;
 import java.util.*;
-import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Service
 public class NlpEngineService {
 
     private static final Logger log = LoggerFactory.getLogger(NlpEngineService.class);
     private final NlpIntentRepository intentRepository;
+    private final LanguageDetectorService languageDetectorService;
 
-    public NlpEngineService(NlpIntentRepository intentRepository) {
+    public NlpEngineService(NlpIntentRepository intentRepository, LanguageDetectorService languageDetectorService) {
         this.intentRepository = intentRepository;
+        this.languageDetectorService = languageDetectorService;
     }
 
     @Cacheable(value = "intents")
@@ -34,78 +36,65 @@ public class NlpEngineService {
     }
 
     public String processAndMatch(String userMessage) {
-        String cleanMessage = normalizeText(userMessage);
-        String[] tokens = cleanMessage.split("\\s+");
-
         List<NlpIntentEntity> allIntents = getAllIntentsCached();
-        NlpIntentEntity bestMatch = null;
-        double highestScore = 0.0;
+        if (allIntents.isEmpty()) {
+            return "Desculpe, ainda não fui treinado com nenhuma intenção de atendimento.";
+        }
 
-        for (NlpIntentEntity intent : allIntents) {
-            double currentScore = 0.0;
+        String lang = languageDetectorService.detectLanguage(userMessage);
+        String cleanedMsg = TextNormalizerUtil.cleanAndDeduplicate(userMessage);
+        List<String> tokens = languageDetectorService.tokenize(cleanedMsg, lang);
 
-            for (String keyword : intent.getKeywords()) {
-                String cleanKeyword = normalizeText(keyword);
+        List<NlpIntentEntity> candidates = filterCandidatesByLang(allIntents, lang);
 
-                if (cleanMessage.contains(cleanKeyword)) {
-                    currentScore += 3.0;
-                } else {
-                    for (String token : tokens) {
-                        int distance = calculateLevenshteinDistance(token, cleanKeyword);
-                        if (distance <= 2 && token.length() >= 4) {
-                            currentScore += 1.5;
+        NlpIntentEntity bestIntent = null;
+        double maxScore = 0.0;
+
+        for (NlpIntentEntity intent : candidates) {
+            double score = evaluateIntentScore(intent, cleanedMsg, tokens);
+            if (score > maxScore) {
+                maxScore = score;
+                bestIntent = intent;
+            }
+        }
+
+        log.info("Score NLP: {} | Idioma: [{}] | Mensagem: '{}'", maxScore, lang, cleanedMsg);
+
+        if (bestIntent != null && maxScore >= 1.5 && !bestIntent.getResponses().isEmpty()) {
+            List<String> responses = bestIntent.getResponses();
+            return responses.get(new Random().nextInt(responses.size()));
+        }
+
+        return languageDetectorService.getFallbackMessage(lang);
+    }
+
+    private List<NlpIntentEntity> filterCandidatesByLang(List<NlpIntentEntity> intents, String lang) {
+        List<NlpIntentEntity> filtered = intents.stream()
+                .filter(i -> i.getLanguage() != null && i.getLanguage().equalsIgnoreCase(lang))
+                .collect(Collectors.toList());
+        return filtered.isEmpty() ? intents : filtered;
+    }
+
+    private double evaluateIntentScore(NlpIntentEntity intent, String cleanedMsg, List<String> tokens) {
+        double score = 0.0;
+        for (String keyword : intent.getKeywords()) {
+            String cleanKw = TextNormalizerUtil.cleanAndDeduplicate(keyword);
+
+            if (cleanedMsg.contains(cleanKw) || cleanKw.contains(cleanedMsg)) {
+                score += 4.0;
+            } else {
+                for (String token : tokens) {
+                    if (token.contains(cleanKw) || cleanKw.contains(token)) {
+                        score += 3.0;
+                    } else {
+                        double similarity = TextNormalizerUtil.calculateSimilarity(token, cleanKw);
+                        if (similarity >= 0.6) {
+                            score += (similarity * 2.5);
                         }
                     }
                 }
             }
-
-            if (currentScore > highestScore) {
-                highestScore = currentScore;
-                bestMatch = intent;
-            }
         }
-
-        if (bestMatch != null && highestScore >= 1.5 && !bestMatch.getResponses().isEmpty()) {
-            List<String> responses = bestMatch.getResponses();
-            return responses.get(new Random().nextInt(responses.size()));
-        }
-
-        return "Desculpe, não consegui compreender exatamente. Se precisar de ajuda, digite 'atendente' para falar com o suporte.";
-    }
-
-    private int calculateLevenshteinDistance(String lhs, String rhs) {
-        int len0 = lhs.length() + 1;
-        int len1 = rhs.length() + 1;
-
-        int[] cost = new int[len0];
-        int[] newcost = new int[len0];
-
-        for (int i = 0; i < len0; i++) cost[i] = i;
-
-        for (int j = 1; j < len1; j++) {
-            newcost[0] = j;
-
-            for (int i = 1; i < len0; i++) {
-                int match = (lhs.charAt(i - 1) == rhs.charAt(j - 1)) ? 0 : 1;
-                int cost_replace = cost[i - 1] + match;
-                int cost_insert = cost[i] + 1;
-                int cost_delete = newcost[i - 1] + 1;
-
-                newcost[i] = Math.min(Math.min(cost_insert, cost_delete), cost_replace);
-            }
-
-            int[] swap = cost;
-            cost = newcost;
-            newcost = swap;
-        }
-
-        return cost[len0 - 1];
-    }
-
-    private String normalizeText(String text) {
-        if (text == null) return "";
-        String normalized = Normalizer.normalize(text, Normalizer.Form.NFD);
-        Pattern pattern = Pattern.compile("\\p{InCombiningDiacriticalMarks}+");
-        return pattern.matcher(normalized).replaceAll("").toLowerCase().trim();
+        return score;
     }
 }
