@@ -14,7 +14,7 @@
 	<artifactId>chatbot</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>chatbot</name>
-	<description>API de Chatbot e NLP com Spring AI</description>
+	<description>API de Chatbot e NLP com Spring AI e Google Gemini</description>
 
 	<properties>
 		<java.version>21</java.version>
@@ -44,11 +44,11 @@
 			<artifactId>spring-boot-starter-websocket</artifactId>
 		</dependency>
 
-		<!-- Spring AI (OpenAI) -->
-<!--		<dependency>-->
-<!--			<groupId>org.springframework.ai</groupId>-->
-<!--			<artifactId>spring-ai-openai-spring-boot-starter</artifactId>-->
-<!--		</dependency>-->
+		<!-- Substitua o starter do vertex-ai por este -->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-openai-spring-boot-starter</artifactId>
+		</dependency>
 
 		<!-- Persistence & Database -->
 		<dependency>
@@ -66,6 +66,7 @@
 			<artifactId>h2</artifactId>
 			<scope>runtime</scope>
 		</dependency>
+
 		<!-- Validation -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -79,10 +80,29 @@
 			<scope>test</scope>
 		</dependency>
 
+		<!-- Tess4J (OCR) -->
 		<dependency>
 			<groupId>net.sourceforge.tess4j</groupId>
 			<artifactId>tess4j</artifactId>
 			<version>5.11.0</version>
+		</dependency>
+
+		<!-- Deep Java Library para Embeddings Semânticos Nativos em Java -->
+		<dependency>
+			<groupId>ai.djl</groupId>
+			<artifactId>api</artifactId>
+			<version>0.28.0</version>
+		</dependency>
+		<dependency>
+			<groupId>ai.djl.huggingface</groupId>
+			<artifactId>tokenizers</artifactId>
+			<version>0.28.0</version>
+		</dependency>
+		<dependency>
+			<groupId>ai.djl.pytorch</groupId>
+			<artifactId>pytorch-engine</artifactId>
+			<version>0.28.0</version>
+			<scope>runtime</scope>
 		</dependency>
 	</dependencies>
 

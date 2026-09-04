@@ -19,6 +19,7 @@ public class NlpIntentEntity {
     @Column(nullable = false, length = 10)
     private String language;
 
+    // Mantido para compatibilidade com os controllers e DTOs de treinamento
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "nlp_intent_keywords", joinColumns = @JoinColumn(name = "intent_id"))
     @Column(name = "keyword")
@@ -28,6 +29,9 @@ public class NlpIntentEntity {
     @CollectionTable(name = "nlp_intent_responses", joinColumns = @JoinColumn(name = "intent_id"))
     @Column(name = "response", columnDefinition = "TEXT")
     private List<String> responses = new ArrayList<>();
+
+    @Transient
+    private float[] semanticEmbedding;
 
     public NlpIntentEntity() {}
 
@@ -45,4 +49,7 @@ public class NlpIntentEntity {
 
     public List<String> getResponses() { return responses; }
     public void setResponses(List<String> responses) { this.responses = responses; }
+
+    public float[] getSemanticEmbedding() { return semanticEmbedding; }
+    public void setSemanticEmbedding(float[] semanticEmbedding) { this.semanticEmbedding = semanticEmbedding; }
 }

@@ -3,6 +3,7 @@ package com.rival.chatbot.controller;
 import com.rival.chatbot.domain.NlpIntentEntity;
 import com.rival.chatbot.dto.NlpIntentDTO;
 import com.rival.chatbot.repository.NlpIntentRepository;
+import com.rival.chatbot.service.LocalVectorNlpService;
 import com.rival.chatbot.service.NlpEngineService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -15,11 +16,11 @@ import java.util.List;
 public class NlpTrainingController {
 
     private final NlpIntentRepository repository;
-    private final NlpEngineService nlpEngineService;
+    private final LocalVectorNlpService localVectorNlpService;
 
-    public NlpTrainingController(NlpIntentRepository repository, NlpEngineService nlpEngineService) {
+    public NlpTrainingController(NlpIntentRepository repository, LocalVectorNlpService localVectorNlpService) {
         this.repository = repository;
-        this.nlpEngineService = nlpEngineService;
+        this.localVectorNlpService = localVectorNlpService;
     }
 
     @PostMapping("/intents")
@@ -31,7 +32,7 @@ public class NlpTrainingController {
         entity.setResponses(dto.responses());
 
         NlpIntentEntity saved = repository.save(entity);
-        nlpEngineService.clearIntentsCache();
+        localVectorNlpService.clearIntentsCache();
 
         return ResponseEntity.ok(saved);
     }
