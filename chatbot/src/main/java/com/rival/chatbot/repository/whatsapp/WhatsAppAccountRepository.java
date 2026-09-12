@@ -1,6 +1,6 @@
-package com.rival.chatbot.repository;
+package com.rival.chatbot.repository.whatsapp;
 
-import com.rival.chatbot.domain.WhatsAppAccountEntity;
+import com.rival.chatbot.domain.whatsapp.WhatsAppAccountEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 

@@ -1,4 +1,4 @@
-package com.rival.chatbot.dto;
+package com.rival.chatbot.dto.whatsapp;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.List;

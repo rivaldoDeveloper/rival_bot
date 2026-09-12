@@ -1,12 +1,12 @@
-package com.rival.chatbot.controller;
+package com.rival.chatbot.controller.whatsapp;
 
-import com.rival.chatbot.domain.WhatsAppAccountEntity;
+import com.rival.chatbot.domain.whatsapp.WhatsAppAccountEntity;
 import com.rival.chatbot.dto.ChatRequestDTO;
 import com.rival.chatbot.dto.ChatResponseDTO;
-import com.rival.chatbot.dto.WhatsAppWebhookDTO;
-import com.rival.chatbot.repository.WhatsAppAccountRepository;
+import com.rival.chatbot.dto.whatsapp.WhatsAppWebhookDTO;
+import com.rival.chatbot.repository.whatsapp.WhatsAppAccountRepository;
 import com.rival.chatbot.service.ChatService;
-import com.rival.chatbot.service.WhatsAppSenderService;
+import com.rival.chatbot.service.whatsapp.WhatsAppSenderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,6 +37,9 @@ public class WhatsAppWebhookController {
         this.whatsAppAccountRepository = whatsAppAccountRepository;
     }
 
+    /**
+     * Validação do Handshake do Webhook exigido pela Meta
+     */
     @GetMapping("/webhook")
     public ResponseEntity<String> verifyWebhook(
             @RequestParam("hub.mode") String mode,
@@ -47,9 +50,13 @@ public class WhatsAppWebhookController {
             log.info("Handshake do Webhook do WhatsApp verificado com sucesso!");
             return ResponseEntity.ok(challenge);
         }
+        log.warn("Falha na verificação do Webhook. Token incorreto ou modo inválido.");
         return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
     }
 
+    /**
+     * Recebimento de mensagens em tempo real enviado pela Meta
+     */
     @PostMapping("/webhook")
     public ResponseEntity<Void> receiveMessage(@RequestBody WhatsAppWebhookDTO payload) {
         try {
@@ -57,30 +64,32 @@ public class WhatsAppWebhookController {
                 var change = payload.entry().get(0).changes().get(0);
                 var value = change.value();
 
-                // 1. Extração Dinâmica do ID do Número Receptor (Quem recebeu a mensagem no WhatsApp Business)
+                // 1. Extrai o Phone Number ID do destinatário (Qual conta de WhatsApp Business recebeu)
                 String recipientPhoneNumberId = value.metadata().phoneNumberId();
 
                 if (value.messages() != null && !value.messages().isEmpty()) {
                     var message = value.messages().get(0);
 
+                    // Processa apenas mensagens do tipo texto
                     if ("text".equals(message.type())) {
-                        // 2. Extração Dinâmica do Telefone do Cliente (Quem enviou a mensagem)
                         String userPhoneNumber = message.from();
                         String userText = message.text().body();
 
-                        // 3. Busca das Credenciais Dinâmicas do Tenant no PostgreSQL pelo Phone Number ID
-                        WhatsAppAccountEntity account = whatsAppAccountRepository.findByPhoneNumberId(recipientPhoneNumberId)
-                                .orElseThrow(() -> new RuntimeException("Conta de WhatsApp não cadastrada no sistema: " + recipientPhoneNumberId));
+                        log.info("Mensagem recebida do numero {} para o Phone Number ID Meta {}", userPhoneNumber, recipientPhoneNumberId);
 
-                        // 4. Criação Dinâmica do ID de Sessão isolado por Telefone
+                        // 2. Busca dinâmica das credenciais do Tenant no PostgreSQL pelo Phone Number ID
+                        WhatsAppAccountEntity account = whatsAppAccountRepository.findByPhoneNumberId(recipientPhoneNumberId)
+                                .orElseThrow(() -> new RuntimeException("Conta de WhatsApp não cadastrada no sistema para o Phone Number ID: " + recipientPhoneNumberId));
+
+                        // 3. Cria ID de Sessão isolado por telefone de origem e Tenant ID
                         UUID sessionId = UUID.nameUUIDFromBytes(userPhoneNumber.getBytes());
                         UUID tenantId = account.getTenantId();
 
-                        // 5. Processamento pelo Motor de NLP
+                        // 4. Processamento NLP e regras de negócio
                         ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, userText);
                         ChatResponseDTO response = chatService.processMessage(chatRequest);
 
-                        // 6. Envio da Resposta para o WhatsApp com Credenciais Carregadas Dinamicamente
+                        // 5. Disparo da resposta via Graph API com o Token específico do Tenant encontrado no banco
                         whatsAppSenderService.sendMessage(
                                 account.getPhoneNumberId(),
                                 account.getApiToken(),
@@ -94,6 +103,7 @@ public class WhatsAppWebhookController {
             log.error("Erro ao processar fluxo dinâmico do Webhook do WhatsApp", e);
         }
 
+        // Sempre retorna HTTP 200 OK para a Meta não suspender o Webhook por falha de entrega
         return ResponseEntity.ok().build();
     }
 }

@@ -6,7 +6,8 @@ import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.stream.Collectors;
 
-@Service
+/*LEGADO NÂO MEXER, NEM APAGAR*/
+//@Service
 public class LanguageDetectorService {
 
     private static final Map<String, Set<String>> STOP_WORDS_BY_LANG = Map.of(

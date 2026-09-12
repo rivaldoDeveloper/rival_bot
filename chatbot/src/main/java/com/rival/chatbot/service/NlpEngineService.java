@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
 
+/*LEGADO NÂO MEXER, NEM APAGAR*/
 /*@Service*/
 public class NlpEngineService {
 

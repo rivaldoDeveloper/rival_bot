@@ -1,4 +1,4 @@
-package com.rival.chatbot.domain;
+package com.rival.chatbot.domain.whatsapp;
 
 import jakarta.persistence.*;
 import java.util.UUID;
@@ -17,13 +17,14 @@ public class WhatsAppAccountEntity {
     private UUID tenantId;
 
     @Column(nullable = false, unique = true)
-    private String phoneNumberId; // ID fornecido no painel da Meta para esta empresa
+    private String phoneNumberId;
 
     @Column(nullable = false)
-    private String displayPhoneNumber; // O número real (ex: 5511999999999)
+    private String displayPhoneNumber;
 
+    // ⚠️ GARANTA QUE ESTÁ COMO TEXT PARA SUPORTAR TOKENS LONGOS DA META
     @Column(nullable = false, columnDefinition = "TEXT")
-    private String apiToken; // Token de acesso Bearer da Meta para esta empresa
+    private String apiToken;
 
     public WhatsAppAccountEntity() {}
 

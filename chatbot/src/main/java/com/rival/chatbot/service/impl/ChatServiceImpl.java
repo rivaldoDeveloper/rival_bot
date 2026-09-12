@@ -442,7 +442,8 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private File saveImageToDisk(MultipartFile file) throws IOException {
-        String uploadDir = "C:/chatbot_uploads/";
+        // Usa caminho relativo para funcionar em qualquer sistema operacional (Windows/Linux/Docker)
+        String uploadDir = "./uploads/";
         File dir = new File(uploadDir);
         if (!dir.exists()) {
             dir.mkdirs();
@@ -452,6 +453,7 @@ public class ChatServiceImpl implements ChatService {
         try (FileOutputStream fos = new FileOutputStream(serverFile)) {
             fos.write(file.getBytes());
         }
+        log.info("Imagem armazenada permanentemente em: {}", serverFile.getAbsolutePath());
         return serverFile;
     }
 }
