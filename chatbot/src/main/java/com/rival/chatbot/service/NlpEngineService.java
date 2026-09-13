@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 
 /*LEGADO NÂO MEXER, NEM APAGAR*/
 /*@Service*/
+@SuppressWarnings({"all", "java:S1186", "java:S1192"})
 public class NlpEngineService {
 
     private static final Logger log = LoggerFactory.getLogger(NlpEngineService.class);

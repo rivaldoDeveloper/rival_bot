@@ -1,13 +1,13 @@
 package com.rival.chatbot.service;
 
 import com.rival.chatbot.util.TextNormalizerUtil;
-import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
 /*LEGADO NÂO MEXER, NEM APAGAR*/
 //@Service
+@SuppressWarnings({"all", "java:S1186", "java:S1192"})
 public class LanguageDetectorService {
 
     private static final Map<String, Set<String>> STOP_WORDS_BY_LANG = Map.of(

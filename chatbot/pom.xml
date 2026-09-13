@@ -44,7 +44,7 @@
 			<artifactId>spring-boot-starter-websocket</artifactId>
 		</dependency>
 
-		<!-- Substitua o starter do vertex-ai por este -->
+		<!-- Spring AI OpenAI Starter (usado para integração com Gemini) -->
 		<dependency>
 			<groupId>org.springframework.ai</groupId>
 			<artifactId>spring-ai-openai-spring-boot-starter</artifactId>
@@ -87,7 +87,7 @@
 			<version>5.11.0</version>
 		</dependency>
 
-		<!-- Deep Java Library para Embeddings Semânticos Nativos em Java -->
+		<!-- Deep Java Library para Embeddings Semânticos -->
 		<dependency>
 			<groupId>ai.djl</groupId>
 			<artifactId>api</artifactId>
@@ -105,6 +105,7 @@
 			<scope>runtime</scope>
 		</dependency>
 
+		<!-- Telegram Bots Starter -->
 		<dependency>
 			<groupId>org.telegram</groupId>
 			<artifactId>telegrambots-spring-boot-starter</artifactId>
@@ -118,6 +119,7 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
@@ -125,6 +127,37 @@
 					<source>21</source>
 					<target>21</target>
 				</configuration>
+			</plugin>
+
+			<!-- Configuração do JaCoCo (Gerador de Relatório de Cobertura) -->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>0.8.12</version>
+				<configuration>
+					<excludes>
+						<!-- Ignora classes e pacotes legados do cálculo de Cobertura -->
+						<exclude>**/com/rival/chatbot/service/NlpEngineService.*</exclude>
+						<exclude>**/com/rival/chatbot/service/LanguageDetectorService.*</exclude>
+						<exclude>**/com/rival/chatbot/service/impl/ChatLegacyGeminiServiceImpl.*</exclude>
+						<exclude>**/com/rival/chatbot/service/impl/ChatLegacyServiceImpl.*</exclude>
+						<exclude>**/legado/**</exclude>
+					</excludes>
+				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>prepare-agent</goal>
+						</goals>
+					</execution>
+					<execution>
+						<id>report</id>
+						<phase>test</phase>
+						<goals>
+							<goal>report</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>
