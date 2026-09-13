@@ -18,8 +18,12 @@ public class TelegramInitializerConfig {
     public TelegramBotsApi telegramBotsApi(TelegramBotService telegramBotService) throws TelegramApiException {
         TelegramBotsApi botsApi = new TelegramBotsApi(DefaultBotSession.class);
         try {
-            botsApi.registerBot(telegramBotService);
-            log.info("Telegram Bot [{}] registrado e escutando mensagens em tempo real!", telegramBotService.getBotUsername());
+            if (!telegramBotService.getBotToken().isBlank()) {
+                botsApi.registerBot(telegramBotService);
+                log.info("Telegram Bot [{}] registrado e escutando mensagens em tempo real via PostgreSQL!", telegramBotService.getBotUsername());
+            } else {
+                log.warn("Nenhum Bot de Telegram configurado ou ativo na base de dados (tabela 'telegram_bot_configs').");
+            }
         } catch (TelegramApiException e) {
             log.error("Erro ao registrar o Bot do Telegram", e);
         }

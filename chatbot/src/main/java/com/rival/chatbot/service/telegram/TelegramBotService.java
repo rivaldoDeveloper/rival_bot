@@ -1,18 +1,22 @@
 package com.rival.chatbot.service.telegram;
 
+import com.rival.chatbot.domain.telegram.TelegramBotConfigEntity;
 import com.rival.chatbot.dto.ChatRequestDTO;
 import com.rival.chatbot.dto.ChatResponseDTO;
+import com.rival.chatbot.repository.telegram.TelegramBotConfigRepository;
 import com.rival.chatbot.service.ChatService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.DefaultBotOptions;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 
-import javax.net.ssl.*;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
@@ -20,21 +24,33 @@ import java.util.UUID;
 @Component
 public class TelegramBotService extends TelegramLongPollingBot {
 
+    //configurar aplication
+    // -Djavax.net.ssl.trustStoreType=WINDOWS-ROOT -Dcom.sun.net.ssl.checkRevocation=false
+
     private static final Logger log = LoggerFactory.getLogger(TelegramBotService.class);
     private final ChatService chatService;
-    private final String botUsername;
+    private final TelegramBotConfigRepository telegramBotConfigRepository;
 
-    public TelegramBotService(ChatService chatService,
-                              @Value("${telegram.bot.username}") String botUsername,
-                              @Value("${telegram.bot.token}") String botToken) {
-        super(configureUnsafeSSLAndGetOptions(), botToken);
+    public TelegramBotService(ChatService chatService, TelegramBotConfigRepository telegramBotConfigRepository) {
+        super(configureUnsafeSSLAndGetOptions(), "");
         this.chatService = chatService;
-        this.botUsername = botUsername;
+        this.telegramBotConfigRepository = telegramBotConfigRepository;
+    }
+
+    @Override
+    public String getBotToken() {
+        // Busca dinamicamente o token do bot ativo no PostgreSQL
+        return telegramBotConfigRepository.findFirstByActiveTrue()
+                .map(TelegramBotConfigEntity::getBotToken)
+                .orElse("");
     }
 
     @Override
     public String getBotUsername() {
-        return this.botUsername;
+        // Busca dinamicamente o username no PostgreSQL
+        return telegramBotConfigRepository.findFirstByActiveTrue()
+                .map(TelegramBotConfigEntity::getBotUsername)
+                .orElse("rival_atendimento_bot");
     }
 
     @Override
@@ -43,7 +59,6 @@ public class TelegramBotService extends TelegramLongPollingBot {
             if (update.hasMessage() && update.getMessage().hasText()) {
                 String userText = update.getMessage().getText().trim();
                 Long chatId = update.getMessage().getChatId();
-
                 log.info("Mensagem recebida no Telegram do chatId {}: '{}'", chatId, userText);
 
                 if ("/start".equalsIgnoreCase(userText)) {
@@ -51,8 +66,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     return;
                 }
 
+                // Identifica o Tenant ID dinamicamente no banco
+                UUID tenantId = telegramBotConfigRepository.findFirstByActiveTrue()
+                        .map(TelegramBotConfigEntity::getTenantId)
+                        .orElseGet(() -> UUID.nameUUIDFromBytes("TELEGRAM_TENANT".getBytes()));
+
                 UUID sessionId = UUID.nameUUIDFromBytes(chatId.toString().getBytes());
-                UUID tenantId = UUID.nameUUIDFromBytes("TELEGRAM_TENANT".getBytes());
 
                 ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, userText);
                 ChatResponseDTO response = chatService.processMessage(chatRequest);
@@ -85,16 +104,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         public void checkServerTrusted(X509Certificate[] certs, String authType) {}
                     }
             };
-
             SSLContext sc = SSLContext.getInstance("SSL");
             sc.init(null, trustAllCerts, new SecureRandom());
             HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
             HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
             SSLContext.setDefault(sc);
-
-            // Desativa a validação no escopo da JVM para bibliotecas Apache que usam JSSE
             System.setProperty("com.sun.net.ssl.checkRevocation", "false");
-
             log.info("Configuração de bypass de SSL/PKIX concluída no escopo do Telegram Service.");
         } catch (Exception e) {
             log.error("Erro ao configurar SSL inseguro", e);
