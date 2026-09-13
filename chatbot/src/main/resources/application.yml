@@ -1,10 +1,10 @@
 spring:
   application:
-    name: payment-api
+    name: chatbot-api
   datasource:
     url: jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require
     username: neondb_owner
-    password: ${NEON_DB_PASSWORD:npg_lZhcVq9WadG0}
+    password: ${NEON_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -13,7 +13,6 @@ spring:
     properties:
       hibernate:
         format_sql: true
-
   ai:
     openai:
       api-key: ${GEMINI_API_KEY}
@@ -22,11 +21,13 @@ spring:
         options:
           model: "gemini-1.5-flash"
           temperature: 0.7
-
 whatsapp:
   api:
-    verify-token: ${WHATSAPP_VERIFY_TOKEN:meu_token_secreto_123}
-
+    verify-token: ${WHATSAPP_VERIFY_TOKEN}
 tesseract:
   datapath: C:/tessdata
   language: por
+telegram:
+  bot:
+    username: rival_atendimento_bot
+    token: ${TELEGRAM_BOT_TOKEN}
