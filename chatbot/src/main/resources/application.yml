@@ -2,7 +2,7 @@ spring:
   application:
     name: chatbot-api
   datasource:
-    url: jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+    url: ${JDBC_POSTGRES}
     username: neondb_owner
     password: ${NEON_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
