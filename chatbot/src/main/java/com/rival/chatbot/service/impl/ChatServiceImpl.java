@@ -333,6 +333,11 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+/**
+ * Serviço responsável por gerenciar o fluxo principal de mensagens do Chatbot.
+ * Integra a recepção de dados, OCR de imagens, análise de PNL vetorial local,
+ * captura assíncrona de leads e transbordo para atendimento humano.
+ */
 @Service
 public class ChatServiceImpl implements ChatService {
 
@@ -340,10 +345,14 @@ public class ChatServiceImpl implements ChatService {
 
     private final ChatMessageRepository repository;
     private final ChatMapper chatMapper;
-    private final LocalVectorNlpService localVectorNlpService; // PNL Vetorial Nativa
+    private final LocalVectorNlpService localVectorNlpService;
     private final DataExtractorService dataExtractorService;
     private final OcrService ocrService;
 
+    /**
+     * Injeção de dependências via construtor.
+     * BOAS PRÁTICAS: Favorece a imutabilidade dos atributos (final) e facilita testes unitários com Mocks.
+     */
     public ChatServiceImpl(ChatMessageRepository repository,
                            ChatMapper chatMapper,
                            LocalVectorNlpService localVectorNlpService,
@@ -356,6 +365,9 @@ public class ChatServiceImpl implements ChatService {
         this.ocrService = ocrService;
     }
 
+    /**
+     * Processa requisições de chat em formato JSON (Texto puro ou Imagem em Base64).
+     */
     @Override
     @Transactional
     public ChatResponseDTO processMessage(ChatRequestDTO request) {
@@ -363,24 +375,32 @@ public class ChatServiceImpl implements ChatService {
         return handleChatFlow(request.sessionId(), request.tenantId(), userTextContent);
     }
 
+    /**
+     * Processa requisições contendo arquivos físicos de imagem via Multipart.
+     */
     @Override
     @Transactional
     public ChatResponseDTO processImageFileMessage(UUID sessionId, UUID tenantId, String message, MultipartFile imageFile) {
         StringBuilder finalContentBuilder = new StringBuilder();
 
+        // 1. Concatena texto opcional enviado junto à imagem
         if (message != null && !message.isBlank()) {
             finalContentBuilder.append(message.trim()).append(" ");
         }
 
+        // 2. Processa o arquivo físico de imagem realizando OCR via Tesseract
         if (imageFile != null && !imageFile.isEmpty()) {
             try {
+                log.info("Arquivo de imagem recebido ({}, {} bytes). Processando OCR...",
+                        imageFile.getOriginalFilename(), imageFile.getSize());
+
                 File savedFile = saveImageToDisk(imageFile);
                 String extractedText = ocrService.extractTextFromImageFile(savedFile);
                 if (!extractedText.isBlank()) {
                     finalContentBuilder.append(extractedText);
                 }
             } catch (Exception e) {
-                log.error("Erro ao processar imagem", e);
+                log.error("Erro ao processar arquivo de imagem do usuário", e);
             }
         }
 
@@ -392,8 +412,14 @@ public class ChatServiceImpl implements ChatService {
         return handleChatFlow(sessionId, tenantId, finalContent);
     }
 
+    /**
+     * Executa a orquestração do fluxo de atendimento.
+     * BOAS PRÁTICAS:
+     * - Garante o registro auditável no banco de TODAS as interações do usuário.
+     * - Repassa o 'sessionId' para a PNL vetorial para aplicar a regra anti-repetição por conversa.
+     */
     private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent) {
-        // 1. Salva a mensagem do usuário
+        // 1. Persiste a mensagem de entrada do usuário para auditoria e histórico
         ChatMessageEntity userEntity = new ChatMessageEntity();
         userEntity.setSessionId(sessionId);
         userEntity.setTenantId(tenantId);
@@ -401,10 +427,10 @@ public class ChatServiceImpl implements ChatService {
         userEntity.setSenderType("USER");
         repository.save(userEntity);
 
-        // 2. Extração assíncrona de leads
+        // 2. Extração assíncrona de dados do lead (CPF, Nome, E-mail) em background
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
 
-        // 3. Validação de Transbordo Humano
+        // 3. Regra de Negócio: Validação e gatilho de Transbordo Humano
         String userMsgLower = userTextContent.toLowerCase();
         if (userMsgLower.contains("atendente") || userMsgLower.contains("humano") || userMsgLower.contains("suporte")) {
             String handoffResponse = "Entendido! Estou transferindo o seu atendimento para um operador humano.";
@@ -412,17 +438,22 @@ public class ChatServiceImpl implements ChatService {
             return new ChatResponseDTO(handoffResponse, "BOT", true, LocalDateTime.now());
         }
 
-        // 4. Executa a PNL Semântica Local
-        String nlpResponse = localVectorNlpService.processAndMatch(userTextContent);
+        // 4. Execução do Engine de PNL Vetorial Local
+        // BOAS PRÁTICAS: O repasse do 'sessionId' permite consultar a última resposta enviada e alternar opções
+        String nlpResponse = localVectorNlpService.processAndMatch(sessionId, userTextContent);
 
-        // 5. Salva a resposta do robô
+        // 5. Persiste a resposta gerada pelo robô
         saveBotResponse(sessionId, tenantId, nlpResponse);
 
         return new ChatResponseDTO(nlpResponse, "BOT", false, LocalDateTime.now());
     }
 
+    /**
+     * Sanitiza a entrada extraindo o texto puro ou executando OCR a partir do Base64.
+     */
     private String resolveInputContent(ChatRequestDTO request) {
         if (request.base64Image() != null && !request.base64Image().isBlank()) {
+            log.info("String Base64 detectada. Processando OCR...");
             String extractedText = ocrService.extractTextFromBase64(request.base64Image());
             if (!extractedText.isBlank()) {
                 return extractedText;
@@ -432,6 +463,9 @@ public class ChatServiceImpl implements ChatService {
         return request.message() != null ? request.message() : "";
     }
 
+    /**
+     * Persiste a resposta do bot na tabela de mensagens do chat.
+     */
     private void saveBotResponse(UUID sessionId, UUID tenantId, String responseContent) {
         ChatMessageEntity botEntity = new ChatMessageEntity();
         botEntity.setSessionId(sessionId);
@@ -441,15 +475,22 @@ public class ChatServiceImpl implements ChatService {
         repository.save(botEntity);
     }
 
+    /**
+     * Armazena arquivos de imagem em disco.
+     * BOAS PRÁTICAS:
+     * - Utilização de caminhos relativos ('./uploads/') permitindo portabilidade multiplataforma (Windows, Linux, Docker).
+     * - Sanitização com 'UUID.randomUUID()' no nome para prevenir sobrescrita de arquivos com mesmo nome.
+     */
     private File saveImageToDisk(MultipartFile file) throws IOException {
-        // Usa caminho relativo para funcionar em qualquer sistema operacional (Windows/Linux/Docker)
         String uploadDir = "./uploads/";
         File dir = new File(uploadDir);
         if (!dir.exists()) {
             dir.mkdirs();
         }
+
         String fileName = UUID.randomUUID() + "_" + file.getOriginalFilename();
         File serverFile = new File(uploadDir + fileName);
+
         try (FileOutputStream fos = new FileOutputStream(serverFile)) {
             fos.write(file.getBytes());
         }

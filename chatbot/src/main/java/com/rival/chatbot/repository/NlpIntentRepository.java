@@ -10,4 +10,7 @@ import java.util.UUID;
 @Repository
 public interface NlpIntentRepository extends JpaRepository<NlpIntentEntity, UUID> {
     List<NlpIntentEntity> findByLanguage(String language);
+
+    // Retorna Lista para lidar com registros duplicados sem quebrar o Spring
+    List<NlpIntentEntity> findByNameIgnoreCase(String name);
 }

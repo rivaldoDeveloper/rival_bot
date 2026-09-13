@@ -1,6 +1,11 @@
 package com.rival.chatbot.domain;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.Fetch;
+import org.hibernate.annotations.FetchMode;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -23,11 +28,15 @@ public class NlpIntentEntity {
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "nlp_intent_keywords", joinColumns = @JoinColumn(name = "intent_id"))
     @Column(name = "keyword")
+    @Fetch(FetchMode.SUBSELECT) // <-- EVITA MÚLTIPLOS SELECTS INDIVIDUAIS
+    @OnDelete(action = OnDeleteAction.CASCADE) // <-- PERMITE DELETAR O PAI APAGANDO AS RESPOSTAS JUNTO
     private List<String> keywords = new ArrayList<>();
 
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "nlp_intent_responses", joinColumns = @JoinColumn(name = "intent_id"))
     @Column(name = "response", columnDefinition = "TEXT")
+    @Fetch(FetchMode.SUBSELECT) // <-- EVITA MÚLTIPLOS SELECTS INDIVIDUAIS
+    @OnDelete(action = OnDeleteAction.CASCADE) // <-- PERMITE DELETAR O PAI APAGANDO AS RESPOSTAS JUNTO
     private List<String> responses = new ArrayList<>();
 
     @Transient
