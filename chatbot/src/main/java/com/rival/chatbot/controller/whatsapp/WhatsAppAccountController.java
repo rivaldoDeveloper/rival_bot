@@ -1,8 +1,9 @@
 package com.rival.chatbot.controller.whatsapp;
 
 import com.rival.chatbot.domain.whatsapp.WhatsAppAccountEntity;
-import com.rival.chatbot.repository.whatsapp.WhatsAppAccountRepository;
+import com.rival.chatbot.service.whatsapp.WhatsAppAccountService;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,29 +13,20 @@ import java.util.List;
 @RequestMapping("/api/v1/whatsapp/accounts")
 public class WhatsAppAccountController {
 
-    private final WhatsAppAccountRepository repository;
+    private final WhatsAppAccountService service;
 
-    public WhatsAppAccountController(WhatsAppAccountRepository repository) {
-        this.repository = repository;
+    public WhatsAppAccountController(WhatsAppAccountService service) {
+        this.service = service;
     }
 
     @PostMapping
     public ResponseEntity<WhatsAppAccountEntity> registerOrUpdateAccount(@Valid @RequestBody WhatsAppAccountEntity account) {
-        WhatsAppAccountEntity entityToSave = repository.findByPhoneNumberId(account.getPhoneNumberId())
-                .map(existing -> {
-                    existing.setApiToken(account.getApiToken());
-                    existing.setDisplayPhoneNumber(account.getDisplayPhoneNumber());
-                    existing.setTenantId(account.getTenantId());
-                    return existing;
-                })
-                .orElse(account);
-
-        WhatsAppAccountEntity saved = repository.save(entityToSave);
-        return ResponseEntity.ok(saved);
+        WhatsAppAccountEntity saved = service.saveOrUpdateAccount(account);
+        return ResponseEntity.status(HttpStatus.OK).body(saved);
     }
 
     @GetMapping
     public ResponseEntity<List<WhatsAppAccountEntity>> listAccounts() {
-        return ResponseEntity.ok(repository.findAll());
+        return ResponseEntity.ok(service.getAllAccounts());
     }
 }
