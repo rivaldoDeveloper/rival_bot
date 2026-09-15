@@ -10,13 +10,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.DefaultBotOptions;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
+import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.Voice;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import java.io.File;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
@@ -39,7 +42,6 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
     @Override
     public String getBotToken() {
-        // Busca dinamicamente o token do bot ativo no PostgreSQL
         return telegramBotConfigRepository.findFirstByActiveTrue()
                 .map(TelegramBotConfigEntity::getBotToken)
                 .orElse("");
@@ -47,7 +49,6 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
     @Override
     public String getBotUsername() {
-        // Busca dinamicamente o username no PostgreSQL
         return telegramBotConfigRepository.findFirstByActiveTrue()
                 .map(TelegramBotConfigEntity::getBotUsername)
                 .orElse("rival_atendimento_bot");
@@ -56,27 +57,41 @@ public class TelegramBotService extends TelegramLongPollingBot {
     @Override
     public void onUpdateReceived(Update update) {
         try {
-            if (update.hasMessage() && update.getMessage().hasText()) {
-                String userText = update.getMessage().getText().trim();
+            if (update.hasMessage()) {
                 Long chatId = update.getMessage().getChatId();
-                log.info("Mensagem recebida no Telegram do chatId {}: '{}'", chatId, userText);
-
-                if ("/start".equalsIgnoreCase(userText)) {
-                    sendReply(chatId, "Olá! Sou o assistente virtual do Rival Chatbot. Como posso te ajudar hoje?");
-                    return;
-                }
-
-                // Identifica o Tenant ID dinamicamente no banco
                 UUID tenantId = telegramBotConfigRepository.findFirstByActiveTrue()
                         .map(TelegramBotConfigEntity::getTenantId)
                         .orElseGet(() -> UUID.nameUUIDFromBytes("TELEGRAM_TENANT".getBytes()));
-
                 UUID sessionId = UUID.nameUUIDFromBytes(chatId.toString().getBytes());
 
-                ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, userText);
-                ChatResponseDTO response = chatService.processMessage(chatRequest);
+                // 1. Tratamento para Mensagem de Texto
+                if (update.getMessage().hasText()) {
+                    String userText = update.getMessage().getText().trim();
+                    log.info("Mensagem recebida no Telegram do chatId {}: '{}'", chatId, userText);
 
-                sendReply(chatId, response.response());
+                    if ("/start".equalsIgnoreCase(userText)) {
+                        sendReply(chatId, "Olá! Sou o assistente virtual do Rival Chatbot. Como posso te ajudar hoje?");
+                        return;
+                    }
+
+                    ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, userText);
+                    ChatResponseDTO response = chatService.processMessage(chatRequest);
+                    sendReply(chatId, response.response());
+
+                    // 2. Tratamento para Mensagem de Áudio (Voice Note)
+                } else if (update.getMessage().hasVoice()) {
+                    Voice voice = update.getMessage().getVoice();
+                    log.info("Áudio recebido no Telegram do chatId {} (Duração: {}s)", chatId, voice.getDuration());
+
+                    GetFile getFileMethod = new GetFile();
+                    getFileMethod.setFileId(voice.getFileId());
+                    org.telegram.telegrambots.meta.api.objects.File telegramFile = execute(getFileMethod);
+
+                    File downloadedAudio = downloadFile(telegramFile, new File("./uploads/telegram_" + voice.getFileId() + ".ogg"));
+
+                    ChatResponseDTO response = chatService.processAudioFileMessage(sessionId, tenantId, downloadedAudio);
+                    sendReply(chatId, response.response());
+                }
             }
         } catch (Exception e) {
             log.error("Erro ao processar mensagem do Telegram", e);

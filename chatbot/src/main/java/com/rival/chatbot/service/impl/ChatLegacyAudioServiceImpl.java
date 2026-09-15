@@ -19,8 +19,9 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-@Service
-public class ChatServiceImpl implements ChatService {
+//@Service
+@SuppressWarnings({"all", "java:S1186", "java:S1192"})
+public class ChatLegacyAudioServiceImpl implements ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
 
@@ -29,19 +30,23 @@ public class ChatServiceImpl implements ChatService {
     private final LocalVectorNlpService localVectorNlpService;
     private final DataExtractorService dataExtractorService;
     private final OcrService ocrService;
+    private final GeminiAiService geminiAiService;
+
     private final AudioTranscriptionService audioTranscriptionService;
 
-    public ChatServiceImpl(ChatMessageRepository repository,
+    public ChatLegacyAudioServiceImpl(ChatMessageRepository repository,
                            ChatMapper chatMapper,
                            LocalVectorNlpService localVectorNlpService,
                            DataExtractorService dataExtractorService,
                            OcrService ocrService,
+                           GeminiAiService geminiAiService,
                            AudioTranscriptionService audioTranscriptionService) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.localVectorNlpService = localVectorNlpService;
         this.dataExtractorService = dataExtractorService;
         this.ocrService = ocrService;
+        this.geminiAiService = geminiAiService;
         this.audioTranscriptionService = audioTranscriptionService;
     }
 
@@ -97,10 +102,10 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent) {
-        // 1. Persiste a mensagem de entrada no PostgreSQL Neon
+        // 1. Salva mensagem de entrada do usuário no banco
         saveUserMessage(sessionId, tenantId, userTextContent);
 
-        // 2. Extração assíncrona de leads (CPF, Nome, E-mail)
+        // 2. Extração assíncrona de dados de lead (CPF, Nome, E-mail)
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
 
         // 3. Regra de Transbordo Humano
@@ -108,13 +113,20 @@ public class ChatServiceImpl implements ChatService {
             return triggerHandoff(sessionId, tenantId);
         }
 
-        // 4. PROCESSAMENTO 100% AUTORAL: A sua API Java NLP consulta os vetores no PostgreSQL
-        log.info("Processando intenção via Motor PNL Vetorial Java no PostgreSQL...");
-        String finalResponse = localVectorNlpService.processAndMatch(sessionId, userTextContent);
+        // 4. Consulta a base de conhecimento/intenções local (RAG)
+        String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
 
-        // 5. Persiste a resposta autoral do robô no banco
+        // 5. Monta o prompt combinando contexto local + mensagem do usuário para o Gemini
+        String finalPrompt = userTextContent;
+        if (localContext != null && !localContext.contains("Desculpe, não consegui entender")) {
+            finalPrompt = "Com base nas seguintes informações da empresa: " + localContext + "\n\nResponda à solicitação do cliente: " + userTextContent;
+        }
+
+        log.info("Enviando requisição para processamento no Gemini...");
+        String finalResponse = geminiAiService.generateResponse(finalPrompt);
+
+        // 6. Salva a resposta do robô e retorna
         saveBotResponse(sessionId, tenantId, finalResponse);
-
         return new ChatResponseDTO(finalResponse, "BOT", false, LocalDateTime.now());
     }
 
