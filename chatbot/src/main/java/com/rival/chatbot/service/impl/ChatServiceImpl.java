@@ -82,40 +82,49 @@ public class ChatServiceImpl implements ChatService {
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
         log.info("Processando áudio localmente (Java Puro) na sessão {}", sessionId);
 
+        // 1. Transcreve o áudio do cliente
         String transcribedText = audioTranscriptionService.transcribeAudioFile(audioFile);
 
-        saveUserMessage(sessionId, tenantId, transcribedText);
-        dataExtractorService.extractAndSave(sessionId, tenantId, transcribedText);
-
-        if (isHumanHandoff(transcribedText)) {
-            return triggerHandoff(sessionId, tenantId);
+        if ("Erro ao processar a fala.".equals(transcribedText) || "Áudio inaudível".equals(transcribedText)) {
+            String errorMsg = "Desculpe, o áudio ficou inaudível. Pode digitar ou repetir?";
+            saveBotResponse(sessionId, tenantId, errorMsg);
+            return new ChatResponseDTO(errorMsg, "BOT", false, LocalDateTime.now());
         }
 
-        // 1. Motor Vetorial busca no PostgreSQL
-        String localContext = localVectorNlpService.processAndMatch(sessionId, transcribedText);
+        log.info("Áudio compreendido: '{}'. Redirecionando para a esteira unificada...", transcribedText);
 
-        // 2. IA Sintetizadora (Java Puro) monta a resposta
-        String finalResponse = ownGenerativeAiService.generateOwnResponse(transcribedText, localContext);
-
-        saveBotResponse(sessionId, tenantId, finalResponse);
-
-        return new ChatResponseDTO(finalResponse, null, audioFile.getAbsolutePath(), "BOT", false, LocalDateTime.now());
+        // 2. Roteia o texto extraído do áudio para a mesma esteira de inteligência do texto
+        return handleChatFlow(sessionId, tenantId, transcribedText);
     }
 
     private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent) {
+        // 1. Salva a mensagem do cliente e extrai os dados
         saveUserMessage(sessionId, tenantId, userTextContent);
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
 
+        // 2. Transbordo Humano
         if (isHumanHandoff(userTextContent)) {
             return triggerHandoff(sessionId, tenantId);
         }
 
+        // 3. Motor Vetorial busca no PostgreSQL e passa para a IA local
         String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
         String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
 
+        // 4. Salva a resposta no banco (mesmo se for o caminho de um áudio, fica no histórico)
         saveBotResponse(sessionId, tenantId, finalResponse);
 
-        return new ChatResponseDTO(finalResponse, "BOT", false, LocalDateTime.now());
+        // 5. A REGRA DE OURO (Mapeamento de Voz): Verifica se a IA/Banco retornou o prefixo "AUDIO:"
+        String textResponse = finalResponse;
+        String audioUrl = null;
+
+        if (finalResponse != null && finalResponse.startsWith("AUDIO:")) {
+            audioUrl = finalResponse.substring(6).trim(); // Remove o prefixo "AUDIO:"
+            textResponse = ""; // Zera a resposta de texto para enviar APENAS o arquivo
+            log.info("Comando de áudio detectado! O bot vai enviar sua voz nativa: {}", audioUrl);
+        }
+
+        return new ChatResponseDTO(textResponse, null, audioUrl, "BOT", false, LocalDateTime.now());
     }
 
     private void saveUserMessage(UUID sessionId, UUID tenantId, String userTextContent) {
