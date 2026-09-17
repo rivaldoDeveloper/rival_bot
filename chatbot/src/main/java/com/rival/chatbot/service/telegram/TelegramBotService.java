@@ -70,7 +70,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                 if (update.getMessage().hasText()) {
                     String userText = update.getMessage().getText().trim();
-                    log.info("Texto recebido: '{}'", userText);
+                    log.info("Mensagem recebida no Telegram do chatId {}: '{}'", chatId, userText);
+
+                    if ("/start".equalsIgnoreCase(userText)) {
+                        sendReply(chatId, "Olá! Sou o assistente virtual inteligente. Como posso ajudar?");
+                        return;
+                    }
 
                     ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, userText);
                     ChatResponseDTO response = chatService.processMessage(chatRequest);
@@ -78,7 +83,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                 } else if (update.getMessage().hasVoice()) {
                     Voice voice = update.getMessage().getVoice();
-                    log.info("Áudio recebido. Processando com IA Local...");
+                    log.info("Áudio recebido no Telegram do chatId {} (Duração: {}s)", chatId, voice.getDuration());
 
                     GetFile getFileMethod = new GetFile();
                     getFileMethod.setFileId(voice.getFileId());
@@ -86,21 +91,22 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                     File downloadedAudio = downloadFile(telegramFile, new File("./uploads/telegram_" + voice.getFileId() + ".ogg"));
 
-                    // O fluxo de IA Generativa e PNL Vetorial acontece aqui
                     ChatResponseDTO response = chatService.processAudioFileMessage(sessionId, tenantId, downloadedAudio);
 
-                    // 1. Envia a resposta escrita
+                    // 1. Responde com o texto inteligente
                     sendReply(chatId, response.response());
 
-                    // 2. Transforma o texto de resposta em Voz e envia o áudio falado
-                    File botVoiceAudio = textToSpeechService.generateAudioFromText(response.response());
-                    if (botVoiceAudio != null && botVoiceAudio.exists()) {
-                        sendVoiceReply(chatId, botVoiceAudio);
+                    // 2. Devolve o áudio processado para o usuário escutar no Telegram
+                    if (response.audioUrl() != null) {
+                        File savedAudioFile = new File(response.audioUrl());
+                        if (savedAudioFile.exists()) {
+                            sendVoiceReply(chatId, savedAudioFile);
+                        }
                     }
                 }
             }
         } catch (Exception e) {
-            log.error("Erro no TelegramBotService", e);
+            log.error("Erro ao processar mensagem do Telegram", e);
         }
     }
 
@@ -110,8 +116,9 @@ public class TelegramBotService extends TelegramLongPollingBot {
         message.setText(text);
         try {
             execute(message);
+            log.info("Resposta enviada com sucesso para o Telegram chatId {}", chatId);
         } catch (Exception e) {
-            log.error("Erro ao enviar texto", e);
+            log.error("Erro ao enviar resposta via Telegram API", e);
         }
     }
 
@@ -121,9 +128,9 @@ public class TelegramBotService extends TelegramLongPollingBot {
         sendVoice.setVoice(new InputFile(audioFile));
         try {
             execute(sendVoice);
-            log.info("Voz enviada ao usuário com sucesso!");
+            log.info("Áudio de eco enviado com sucesso para o Telegram chatId {}", chatId);
         } catch (Exception e) {
-            log.error("Erro ao enviar voz", e);
+            log.error("Erro ao enviar mensagem de voz via Telegram API", e);
         }
     }
 
@@ -142,7 +149,9 @@ public class TelegramBotService extends TelegramLongPollingBot {
             HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
             SSLContext.setDefault(sc);
             System.setProperty("com.sun.net.ssl.checkRevocation", "false");
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            log.error("Erro ao configurar SSL inseguro", e);
+        }
         return new DefaultBotOptions();
     }
 }

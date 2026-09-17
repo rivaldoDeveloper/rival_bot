@@ -1,162 +1,103 @@
-
-
-//package com.rival.chatbot.service;
-//
-//import org.slf4j.Logger;
-//import org.slf4j.LoggerFactory;
-//import org.springframework.stereotype.Service;
-//
-//import java.io.File;
-//
-//@Service
-//public class AudioTranscriptionService {
-//
-//    private static final Logger log = LoggerFactory.getLogger(AudioTranscriptionService.class);
-//
-//    public String transcribeAudioFile(File audioFile) {
-//        log.warn("Tentativa de processar áudio recebida, mas o motor offline está desativado devido a políticas do AppLocker/Windows.");
-//
-//        // Retorna uma mensagem amigável para o usuário indicando a limitação atual
-//        return "Desculpe, o processamento de áudio está temporariamente desativado no ambiente atual. Por favor, envie sua dúvida por texto.";
-//    }
-//}
-
-
 package com.rival.chatbot.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.vosk.Model;
-import org.vosk.Recognizer;
+import org.springframework.web.client.RestClient;
 
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
-import java.io.BufferedInputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.util.Base64;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class AudioTranscriptionService {
 
     private static final Logger log = LoggerFactory.getLogger(AudioTranscriptionService.class);
+    private final RestClient restClient;
+    private final String apiKey;
 
-    // Força o diretório temporário para evitar bloqueio do AppLocker
-    static {
-        System.setProperty("jna.tmpdir", System.getProperty("java.io.tmpdir"));
+    public AudioTranscriptionService(@Value("${spring.ai.openai.api-key:}") String apiKey) {
+        this.apiKey = apiKey;
+        this.restClient = RestClient.builder()
+                .baseUrl("https://generativelanguage.googleapis.com/v1beta")
+                .defaultHeader("Content-Type", MediaType.APPLICATION_JSON_VALUE)
+                .build();
     }
 
-    private static final String VOSK_PATH_ROOT = "./models/vosk-pt";
-    private static final String VOSK_PATH_SRC = "./src/main/java/com/rival/chatbot/models/vosk-pt";
-
-    private Model voskModel;
-
-    @PostConstruct
-    public void init() {
-        String resolvedPath = null;
-
-        if (Files.exists(Paths.get(VOSK_PATH_ROOT))) {
-            resolvedPath = VOSK_PATH_ROOT;
-        } else if (Files.exists(Paths.get(VOSK_PATH_SRC))) {
-            resolvedPath = VOSK_PATH_SRC;
-        } else {
-            log.error("Vosk não encontrou o modelo de linguagem.");
-            return;
-        }
-
-        try {
-            this.voskModel = new Model(resolvedPath);
-            log.info("Motor de reconhecimento de voz local iniciado!");
-        } catch (Exception e) {
-            log.error("Falha ao inicializar o motor Vosk", e);
-        }
-    }
-
+    /**
+     * Transcrição Real e Inteligente usando a sua API.
+     */
     public String transcribeAudioFile(File audioFile) {
-        if (audioFile == null || !audioFile.exists() || this.voskModel == null) {
+        if (audioFile == null || !audioFile.exists()) {
+            log.warn("Arquivo de áudio inválido fornecido para transcrição.");
             return "";
         }
 
-        // Converte o OGG (WhatsApp/Telegram) para WAV 16khz Mono (Formato obrigatório do Vosk)
-        File wavAudioFile = convertToWav(audioFile);
-
-        try (BufferedInputStream bis = new BufferedInputStream(new FileInputStream(wavAudioFile));
-             Recognizer recognizer = new Recognizer(voskModel, 16000)) {
-
-            byte[] buffer = new byte[4096];
-            int bytesRead;
-
-            while ((bytesRead = bis.read(buffer)) != -1) {
-                recognizer.acceptWaveForm(buffer, bytesRead);
-            }
-
-            String jsonResult = recognizer.getFinalResult();
-            String transcribedText = extractTextFromJson(jsonResult);
-
-            // Apaga arquivo WAV temporário
-            if (!wavAudioFile.getAbsolutePath().equals(audioFile.getAbsolutePath())) {
-                wavAudioFile.delete();
-            }
-
-            // Limpa formatações e retorna
-            transcribedText = transcribedText.trim();
-            if (transcribedText.isEmpty()) {
-                return "áudio inaudível";
-            }
-            return transcribedText;
-
-        } catch (Exception e) {
-            log.error("Erro durante a transcrição do áudio local", e);
-            return "erro ao processar a fala";
-        }
-    }
-
-    private File convertToWav(File sourceFile) {
-        if (sourceFile.getName().toLowerCase().endsWith(".wav")) {
-            return sourceFile;
+        if (apiKey == null || apiKey.isBlank() || apiKey.contains("chave_ficticia")) {
+            log.error("ERRO: Nenhuma chave de API válida foi configurada no application.yml!");
+            return "Erro: Chave de API não configurada.";
         }
 
         try {
-            File destWav = new File(sourceFile.getAbsolutePath() + "_converted.wav");
+            log.info("Lendo áudio real [{}] e enviando para o motor de transcrição inteligente...", audioFile.getName());
+            byte[] audioBytes = Files.readAllBytes(audioFile.toPath());
+            String base64Audio = Base64.getEncoder().encodeToString(audioBytes);
 
-            // O segredo está aqui: Força a frequência de amostragem correta para o Vosk e corta silêncio
-            ProcessBuilder pb = new ProcessBuilder(
-                    "ffmpeg", "-y", "-i", sourceFile.getAbsolutePath(),
-                    "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
-                    destWav.getAbsolutePath()
+            String name = audioFile.getName().toLowerCase();
+            String mimeType = "audio/ogg";
+            if (name.endsWith(".m4a") || name.endsWith(".mp4")) mimeType = "audio/mp4";
+            else if (name.endsWith(".mp3")) mimeType = "audio/mp3";
+            else if (name.endsWith(".wav")) mimeType = "audio/wav";
+
+            Map<String, Object> requestBody = Map.of(
+                    "contents", List.of(
+                            Map.of(
+                                    "parts", List.of(
+                                            Map.of("text", "Transcreva exatamente o que é falado neste áudio em português. Retorne APENAS o texto transcrito, sem introduções."),
+                                            Map.of("inlineData", Map.of("mimeType", mimeType, "data", base64Audio))
+                                    )
+                            )
+                    )
             );
 
-            Process p = pb.start();
-            p.waitFor();
+            // Usa o modelo v1beta flash para processamento rápido de áudio
+            return callGenerativeApi("/models/gemini-1.5-flash:generateContent?key=" + apiKey, requestBody);
 
-            if (destWav.exists() && destWav.length() > 0) {
-                return destWav;
-            }
         } catch (Exception e) {
-            log.error("Falha na conversão via FFmpeg. Verifique se ele está no PATH.", e);
+            log.error("Erro no fluxo de transcrição de áudio: ", e);
+            return "";
         }
-        return sourceFile;
     }
 
-    private String extractTextFromJson(String json) {
+    private String callGenerativeApi(String endpoint, Map<String, Object> requestBody) {
         try {
-            if (json.contains("\"text\" : \"")) {
-                int start = json.indexOf("\"text\" : \"") + 10;
-                int end = json.indexOf("\"", start);
-                return json.substring(start, end);
+            Map<?, ?> response = restClient.post()
+                    .uri(endpoint)
+                    .body(requestBody)
+                    .retrieve()
+                    .body(Map.class);
+
+            if (response != null && response.containsKey("candidates")) {
+                List<?> candidates = (List<?>) response.get("candidates");
+                if (!candidates.isEmpty()) {
+                    Map<?, ?> firstCandidate = (Map<?, ?>) candidates.get(0);
+                    Map<?, ?> content = (Map<?, ?>) firstCandidate.get("content");
+                    List<?> parts = (List<?>) content.get("parts");
+                    if (!parts.isEmpty()) {
+                        Map<?, ?> firstPart = (Map<?, ?>) parts.get(0);
+                        String transcribed = (String) firstPart.get("text");
+                        log.info("Áudio transcrito com inteligência: '{}'", transcribed);
+                        return transcribed.trim();
+                    }
+                }
             }
         } catch (Exception e) {
-            log.trace("Erro ao extrair texto", e);
+            log.error("Falha na chamada da API de transcrição: {}", e.getMessage());
         }
         return "";
-    }
-
-    @PreDestroy
-    public void closeModel() {
-        if (this.voskModel != null) {
-            this.voskModel.close();
-        }
     }
 }
