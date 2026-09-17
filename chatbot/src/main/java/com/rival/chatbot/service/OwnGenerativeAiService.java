@@ -1,126 +1,82 @@
 package com.rival.chatbot.service;
 
-import ai.djl.ModelException;
-import ai.djl.inference.Predictor;
-import ai.djl.ndarray.NDArray;
-import ai.djl.ndarray.NDList;
-import ai.djl.ndarray.NDManager;
-import ai.djl.repository.zoo.Criteria;
-import ai.djl.repository.zoo.ZooModel;
-import com.rival.chatbot.service.ai.GenerativeTokenizer;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class OwnGenerativeAiService {
 
     private static final Logger log = LoggerFactory.getLogger(OwnGenerativeAiService.class);
-    private static final String MODEL_PATH = "./models/deepseek-coder/";
-
-    private final GenerativeTokenizer tokenizer;
-    private ZooModel<NDList, NDList> model;
-
-    public OwnGenerativeAiService(GenerativeTokenizer tokenizer) {
-        this.tokenizer = tokenizer;
-    }
-
-    @PostConstruct
-    public void initModel() {
-        Path path = Paths.get(MODEL_PATH);
-        if (!Files.exists(path)) {
-            log.warn("Diretório do modelo local não encontrado em '{}'. O serviço utilizará o modo de inferência básico até o arquivo ser adicionado.", MODEL_PATH);
-            return;
-        }
-
-        try {
-            log.info("Carregando modelo neural local do disco: {}", path.toAbsolutePath());
-            Criteria<NDList, NDList> criteria = Criteria.builder()
-                    .setTypes(NDList.class, NDList.class)
-                    .optModelPath(path)
-                    .optEngine("PyTorch")
-                    .build();
-
-            this.model = criteria.loadModel();
-            log.info("Modelo neural carregado com sucesso no ecossistema DJL/PyTorch!");
-        } catch (IOException | ModelException e) {
-            log.error("Erro ao carregar o modelo de pesos pré-treinado do diretório local", e);
-        }
-    }
 
     /**
-     * Inferência autorregressiva executando o modelo local carregado via DJL
+     * Motor Sintetizador NLP em Java Puro.
+     * Analisa a frase do usuário e formata a resposta baseada no conhecimento do PostgreSQL.
      */
     public String generateOwnResponse(String userPrompt, String retrievedContext) {
         if (userPrompt == null || userPrompt.isBlank()) {
-            return "Como posso te ajudar hoje?";
+            return "Como posso ajudar você hoje?";
         }
 
-        if (model == null) {
-            return processFallbackInference(userPrompt, retrievedContext);
+        if (retrievedContext == null || retrievedContext.contains("Desculpe") || retrievedContext.contains("Ainda não fui treinado")) {
+            return generateDynamicFallback(userPrompt);
         }
 
-        try (Predictor<NDList, NDList> predictor = model.newPredictor();
-             NDManager manager = NDManager.newBaseManager()) {
-
-            List<Integer> inputTokens = tokenizer.encode(userPrompt);
-            List<Integer> generatedTokens = new ArrayList<>(inputTokens);
-
-            int maxNewTokens = 50;
-            for (int step = 0; step < maxNewTokens; step++) {
-                float[] floatTokens = new float[generatedTokens.size()];
-                for (int i = 0; i < generatedTokens.size(); i++) {
-                    floatTokens[i] = generatedTokens.get(i);
-                }
-
-                NDArray inputTensor = manager.create(floatTokens);
-                NDList inputNDList = new NDList(inputTensor);
-
-                // Executa a inferência nos pesos reais do modelo
-                NDList outputNDList = predictor.predict(inputNDList);
-                NDArray logits = outputNDList.get(0);
-
-                long nextTokenId = logits.argMax(-1).getLong(0) % tokenizer.getVocabSize();
-                if (nextTokenId == 3) { // EOS Token
-                    break;
-                }
-                generatedTokens.add((int) nextTokenId);
-            }
-
-            String output = tokenizer.decode(generatedTokens);
-            if (retrievedContext != null && !retrievedContext.isBlank() && !retrievedContext.contains("Ainda não fui treinado")) {
-                return retrievedContext + "\n\n" + output;
-            }
-            return output;
-
-        } catch (Exception e) {
-            log.error("Erro durante a predição no modelo local", e);
-            return processFallbackInference(userPrompt, retrievedContext);
-        }
+        return synthesizeNaturalResponse(userPrompt, retrievedContext);
     }
 
-    private String processFallbackInference(String userPrompt, String retrievedContext) {
-        log.info("Executando inferência estocástica autoral de contingência...");
-        if (retrievedContext != null && !retrievedContext.isBlank() && !retrievedContext.contains("Ainda não fui treinado")) {
-            return retrievedContext;
+    private String synthesizeNaturalResponse(String userPrompt, String databaseContext) {
+        String lowerPrompt = userPrompt.toLowerCase().trim();
+        String cleanContext = databaseContext.trim();
+
+        // 1. Identificação de Intenção e Sentimento
+        boolean isGreeting = lowerPrompt.matches("^(oi|olá|ola|bom dia|boa tarde|boa noite|opa).*");
+        boolean isQuestion = lowerPrompt.contains("?") || lowerPrompt.matches(".*\\b(como|qual|onde|por que|quanto|quando)\\b.*");
+        boolean isConfirmation = lowerPrompt.matches("^(sim|ok|certo|entendi|perfeito).*");
+
+        StringBuilder response = new StringBuilder();
+
+        // 2. Montagem Dinâmica de Frase
+        if (isGreeting) {
+            response.append("Olá! ");
+        } else if (isConfirmation) {
+            response.append("Maravilha! ");
         }
-        return "Mensagem recebida: '" + userPrompt + "'. O motor generativo autoral está ativo e pronto para receber o arquivo de pesos na pasta " + MODEL_PATH;
+
+        // 3. Estruturação do contexto do banco
+        String formattedContext = cleanContext.substring(0, 1).toUpperCase() + cleanContext.substring(1);
+
+        if (isQuestion) {
+            response.append("Sobre sua dúvida: ").append(formattedContext.substring(0, 1).toLowerCase()).append(formattedContext.substring(1));
+        } else {
+            response.append(formattedContext);
+        }
+
+        // 4. Fechamento conversacional
+        if (!response.toString().endsWith(".") && !response.toString().endsWith("!") && !response.toString().endsWith("?")) {
+            response.append(".");
+        }
+
+        return response.toString();
     }
 
-    @PreDestroy
-    public void closeModel() {
-        if (model != null) {
-            model.close();
-            log.info("Recursos do modelo neural desalocados da memória.");
+    private String generateDynamicFallback(String userPrompt) {
+        List<String> tokens = Arrays.asList(userPrompt.toLowerCase().split("[\\s\\p{Punct}]+"));
+
+        // Extrai palavras-chave ignorando preposições
+        List<String> keywords = tokens.stream()
+                .filter(w -> w.length() > 3 && !w.equals("como") && !w.equals("qual") && !w.equals("quero"))
+                .collect(Collectors.toList());
+
+        if (!keywords.isEmpty()) {
+            String subject = String.join(" ", keywords);
+            return "Eu consultei nossa base na nuvem, mas ainda não tenho detalhes específicos sobre '" + subject + "'. Posso ajudar com outro assunto?";
         }
+
+        return "Analisei o que você disse, mas não encontrei diretrizes no banco de dados. Pode detalhar melhor?";
     }
 }

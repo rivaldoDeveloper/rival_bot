@@ -30,19 +30,22 @@ public class ChatServiceImpl implements ChatService {
     private final DataExtractorService dataExtractorService;
     private final OcrService ocrService;
     private final AudioTranscriptionService audioTranscriptionService;
+    private final OwnGenerativeAiService ownGenerativeAiService;
 
     public ChatServiceImpl(ChatMessageRepository repository,
                            ChatMapper chatMapper,
                            LocalVectorNlpService localVectorNlpService,
                            DataExtractorService dataExtractorService,
                            OcrService ocrService,
-                           AudioTranscriptionService audioTranscriptionService) {
+                           AudioTranscriptionService audioTranscriptionService,
+                           OwnGenerativeAiService ownGenerativeAiService) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.localVectorNlpService = localVectorNlpService;
         this.dataExtractorService = dataExtractorService;
         this.ocrService = ocrService;
         this.audioTranscriptionService = audioTranscriptionService;
+        this.ownGenerativeAiService = ownGenerativeAiService;
     }
 
     @Override
@@ -56,29 +59,20 @@ public class ChatServiceImpl implements ChatService {
     @Transactional
     public ChatResponseDTO processImageFileMessage(UUID sessionId, UUID tenantId, String message, MultipartFile imageFile) {
         StringBuilder finalContentBuilder = new StringBuilder();
-
         if (message != null && !message.isBlank()) {
             finalContentBuilder.append(message.trim()).append(" ");
         }
-
         if (imageFile != null && !imageFile.isEmpty()) {
             try {
-                log.info("Arquivo de imagem recebido ({}, {} bytes). Processando OCR...",
-                        imageFile.getOriginalFilename(), imageFile.getSize());
                 File savedFile = saveFileToDisk(imageFile.getBytes(), imageFile.getOriginalFilename());
                 String extractedText = ocrService.extractTextFromImageFile(savedFile);
-                if (!extractedText.isBlank()) {
-                    finalContentBuilder.append(extractedText);
-                }
+                if (!extractedText.isBlank()) finalContentBuilder.append(extractedText);
             } catch (Exception e) {
-                log.error("Erro ao processar arquivo de imagem do usuário", e);
+                log.error("Erro ao processar imagem", e);
             }
         }
-
         String finalContent = finalContentBuilder.toString().trim();
-        if (finalContent.isBlank()) {
-            finalContent = "Imagem enviada sem texto legível";
-        }
+        if (finalContent.isBlank()) finalContent = "Imagem sem texto legível";
 
         return handleChatFlow(sessionId, tenantId, finalContent);
     }
@@ -86,33 +80,39 @@ public class ChatServiceImpl implements ChatService {
     @Override
     @Transactional
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
-        log.info("Processando áudio recebido para a sessão {}", sessionId);
+        log.info("Processando áudio localmente (Java Puro) na sessão {}", sessionId);
+
         String transcribedText = audioTranscriptionService.transcribeAudioFile(audioFile);
 
-        if (transcribedText == null || transcribedText.isBlank()) {
-            transcribedText = "Áudio enviado sem fala legível";
+        saveUserMessage(sessionId, tenantId, transcribedText);
+        dataExtractorService.extractAndSave(sessionId, tenantId, transcribedText);
+
+        if (isHumanHandoff(transcribedText)) {
+            return triggerHandoff(sessionId, tenantId);
         }
 
-        return handleChatFlow(sessionId, tenantId, transcribedText);
+        // 1. Motor Vetorial busca no PostgreSQL
+        String localContext = localVectorNlpService.processAndMatch(sessionId, transcribedText);
+
+        // 2. IA Sintetizadora (Java Puro) monta a resposta
+        String finalResponse = ownGenerativeAiService.generateOwnResponse(transcribedText, localContext);
+
+        saveBotResponse(sessionId, tenantId, finalResponse);
+
+        return new ChatResponseDTO(finalResponse, null, audioFile.getAbsolutePath(), "BOT", false, LocalDateTime.now());
     }
 
     private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent) {
-        // 1. Persiste a mensagem de entrada no PostgreSQL Neon
         saveUserMessage(sessionId, tenantId, userTextContent);
-
-        // 2. Extração assíncrona de leads (CPF, Nome, E-mail)
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
 
-        // 3. Regra de Transbordo Humano
         if (isHumanHandoff(userTextContent)) {
             return triggerHandoff(sessionId, tenantId);
         }
 
-        // 4. PROCESSAMENTO 100% AUTORAL: A sua API Java NLP consulta os vetores no PostgreSQL
-        log.info("Processando intenção via Motor PNL Vetorial Java no PostgreSQL...");
-        String finalResponse = localVectorNlpService.processAndMatch(sessionId, userTextContent);
+        String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
+        String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
 
-        // 5. Persiste a resposta autoral do robô no banco
         saveBotResponse(sessionId, tenantId, finalResponse);
 
         return new ChatResponseDTO(finalResponse, "BOT", false, LocalDateTime.now());
@@ -128,24 +128,20 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private boolean isHumanHandoff(String userTextContent) {
-        String userMsgLower = userTextContent.toLowerCase();
-        return userMsgLower.contains("atendente") || userMsgLower.contains("humano") || userMsgLower.contains("suporte");
+        String lower = userTextContent.toLowerCase();
+        return lower.contains("atendente") || lower.contains("humano") || lower.contains("suporte");
     }
 
     private ChatResponseDTO triggerHandoff(UUID sessionId, UUID tenantId) {
-        String handoffResponse = "Entendido! Estou transferindo o seu atendimento para um operador humano.";
+        String handoffResponse = "Entendido! Estou transferindo seu atendimento para um operador humano.";
         saveBotResponse(sessionId, tenantId, handoffResponse);
         return new ChatResponseDTO(handoffResponse, "BOT", true, LocalDateTime.now());
     }
 
     private String resolveInputContent(ChatRequestDTO request) {
         if (request.base64Image() != null && !request.base64Image().isBlank()) {
-            log.info("String Base64 detectada. Processando OCR...");
             String extractedText = ocrService.extractTextFromBase64(request.base64Image());
-            if (!extractedText.isBlank()) {
-                return extractedText;
-            }
-            return "Imagem enviada sem texto legível";
+            return extractedText.isBlank() ? "Imagem sem texto legível" : extractedText;
         }
         return request.message() != null ? request.message() : "";
     }
@@ -160,13 +156,9 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private File saveFileToDisk(byte[] bytes, String originalFilename) throws IOException {
-        String uploadDir = "./uploads/";
-        File dir = new File(uploadDir);
-        if (!dir.exists()) {
-            dir.mkdirs();
-        }
-        String fileName = UUID.randomUUID() + "_" + originalFilename;
-        File serverFile = new File(uploadDir + fileName);
+        File dir = new File("./uploads/");
+        if (!dir.exists()) dir.mkdirs();
+        File serverFile = new File(dir, UUID.randomUUID() + "_" + originalFilename);
         try (FileOutputStream fos = new FileOutputStream(serverFile)) {
             fos.write(bytes);
         }
