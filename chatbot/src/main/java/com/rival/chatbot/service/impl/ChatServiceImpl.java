@@ -82,19 +82,19 @@ public class ChatServiceImpl implements ChatService {
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
         log.info("Processando áudio localmente (Java Puro) na sessão {}", sessionId);
 
-        // 1. Transcreve o áudio do cliente
         String transcribedText = audioTranscriptionService.transcribeAudioFile(audioFile);
 
-        if ("Erro ao processar a fala.".equals(transcribedText) || "Áudio inaudível".equals(transcribedText)) {
-            String errorMsg = "Desculpe, o áudio ficou inaudível. Pode digitar ou repetir?";
+        // Tratamento da falha do Vosk
+        if ("erro ao processar a fala".equals(transcribedText) || "áudio inaudível".equals(transcribedText)) {
+            String errorMsg = "Desculpe, não consegui entender o áudio com clareza. Você poderia digitar?";
             saveBotResponse(sessionId, tenantId, errorMsg);
             return new ChatResponseDTO(errorMsg, "BOT", false, LocalDateTime.now());
         }
 
-        log.info("Áudio compreendido: '{}'. Redirecionando para a esteira unificada...", transcribedText);
+        log.info("Áudio transcrito: '{}'", transcribedText);
 
-        // 2. Roteia o texto extraído do áudio para a mesma esteira de inteligência do texto
-        return handleChatFlow(sessionId, tenantId, transcribedText);
+        // Passa para minúscula para facilitar a busca no seu banco de dados PostgreSQL
+        return handleChatFlow(sessionId, tenantId, transcribedText.toLowerCase());
     }
 
     private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent) {
