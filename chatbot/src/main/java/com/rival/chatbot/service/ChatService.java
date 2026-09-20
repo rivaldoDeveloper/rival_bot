@@ -13,6 +13,9 @@ public interface ChatService {
 
     ChatResponseDTO processImageFileMessage(UUID sessionId, UUID tenantId, String message, MultipartFile imageFile);
 
+    // NUEVO MÉTODO PARA EL FLUJO VISUAL
+    ChatResponseDTO processFlowMessage(ChatRequestDTO chatRequestDTO);
+    
     /**
      * Método padrão para processamento de áudio.
      * Implementações legadas que não sobrescreverem este método

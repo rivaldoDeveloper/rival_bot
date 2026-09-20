@@ -30,6 +30,9 @@ public class CustomerDataEntity {
     @Column(nullable = false)
     private LocalDateTime updatedAt;
 
+    @Column(name = "current_node_id")
+    private String currentNodeId;
+
     public CustomerDataEntity() {}
 
     @PrePersist
@@ -67,4 +70,7 @@ public class CustomerDataEntity {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getCurrentNodeId() { return currentNodeId; }
+    public void setCurrentNodeId(String currentNodeId) { this.currentNodeId = currentNodeId; }
 }

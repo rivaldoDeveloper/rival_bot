@@ -6,7 +6,6 @@ import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.mapper.ChatMapper;
 import com.rival.chatbot.repository.ChatMessageRepository;
 import com.rival.chatbot.service.*;
-import com.rival.chatbot.service.AudioTranscriptionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -31,6 +30,7 @@ public class ChatServiceImpl implements ChatService {
     private final OcrService ocrService;
     private final AudioTranscriptionService audioTranscriptionService;
     private final OwnGenerativeAiService ownGenerativeAiService;
+    private final FlowEngineService flowEngineService;
 
     public ChatServiceImpl(ChatMessageRepository repository,
                            ChatMapper chatMapper,
@@ -38,7 +38,8 @@ public class ChatServiceImpl implements ChatService {
                            DataExtractorService dataExtractorService,
                            OcrService ocrService,
                            AudioTranscriptionService audioTranscriptionService,
-                           OwnGenerativeAiService ownGenerativeAiService) {
+                           OwnGenerativeAiService ownGenerativeAiService,
+                           FlowEngineService flowEngineService) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.localVectorNlpService = localVectorNlpService;
@@ -46,13 +47,27 @@ public class ChatServiceImpl implements ChatService {
         this.ocrService = ocrService;
         this.audioTranscriptionService = audioTranscriptionService;
         this.ownGenerativeAiService = ownGenerativeAiService;
+        this.flowEngineService = flowEngineService;
     }
+
+    // ==========================================
+    // CHAMADAS DOS CONTROLADORES
+    // ==========================================
 
     @Override
     @Transactional
     public ChatResponseDTO processMessage(ChatRequestDTO request) {
         String userTextContent = resolveInputContent(request);
-        return handleChatFlow(request.sessionId(), request.tenantId(), userTextContent);
+        // Chama a lógica original
+        return handleStandardChat(request.sessionId(), request.tenantId(), userTextContent);
+    }
+
+    @Override
+    @Transactional
+    public ChatResponseDTO processFlowMessage(ChatRequestDTO request) {
+        String userTextContent = resolveInputContent(request);
+        // Chama a nova lógica de Fluxo Visual
+        return handleVisualFlowChat(request.sessionId(), request.tenantId(), userTextContent);
     }
 
     @Override
@@ -74,58 +89,97 @@ public class ChatServiceImpl implements ChatService {
         String finalContent = finalContentBuilder.toString().trim();
         if (finalContent.isBlank()) finalContent = "Imagem sem texto legível";
 
-        return handleChatFlow(sessionId, tenantId, finalContent);
+        // Mantém a imagem caindo no fluxo padrão
+        return handleStandardChat(sessionId, tenantId, finalContent);
     }
 
     @Override
     @Transactional
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
-        log.info("Processando áudio localmente (Java Puro) na sessão {}", sessionId);
-
+        log.info("Processando áudio localmente na sessão {}", sessionId);
         String transcribedText = audioTranscriptionService.transcribeAudioFile(audioFile);
 
-        // Tratamento da falha do Vosk
         if ("erro ao processar a fala".equals(transcribedText) || "áudio inaudível".equals(transcribedText)) {
-            String errorMsg = "Desculpe, não consegui entender o áudio com clareza. Você poderia digitar?";
+            String errorMsg = "Desculpe, o áudio ficou inaudível. Pode digitar ou repetir?";
             saveBotResponse(sessionId, tenantId, errorMsg);
             return new ChatResponseDTO(errorMsg, "BOT", false, LocalDateTime.now());
         }
 
-        log.info("Áudio transcrito: '{}'", transcribedText);
-
-        // Passa para minúscula para facilitar a busca no seu banco de dados PostgreSQL
-        return handleChatFlow(sessionId, tenantId, transcribedText.toLowerCase());
+        // Mantém o áudio caindo no fluxo padrão
+        return handleStandardChat(sessionId, tenantId, transcribedText.toLowerCase());
     }
 
-    private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent) {
-        // 1. Salva a mensagem do cliente e extrai os dados
+    // ==========================================
+    // ROTAS DE PROCESSAMENTO INTERNO
+    // ==========================================
+
+    /**
+     * LÓGICA ORIGINAL: Apenas PNL e Banco de Conhecimento (sem travas de fluxo)
+     */
+    private ChatResponseDTO handleStandardChat(UUID sessionId, UUID tenantId, String userTextContent) {
         saveUserMessage(sessionId, tenantId, userTextContent);
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
 
-        // 2. Transbordo Humano
         if (isHumanHandoff(userTextContent)) {
             return triggerHandoff(sessionId, tenantId);
         }
 
-        // 3. Motor Vetorial busca no PostgreSQL e passa para a IA local
         String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
         String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
 
-        // 4. Salva a resposta no banco (mesmo se for o caminho de um áudio, fica no histórico)
         saveBotResponse(sessionId, tenantId, finalResponse);
 
-        // 5. A REGRA DE OURO (Mapeamento de Voz): Verifica se a IA/Banco retornou o prefixo "AUDIO:"
         String textResponse = finalResponse;
         String audioUrl = null;
-
         if (finalResponse != null && finalResponse.startsWith("AUDIO:")) {
-            audioUrl = finalResponse.substring(6).trim(); // Remove o prefixo "AUDIO:"
-            textResponse = ""; // Zera a resposta de texto para enviar APENAS o arquivo
-            log.info("Comando de áudio detectado! O bot vai enviar sua voz nativa: {}", audioUrl);
+            audioUrl = finalResponse.substring(6).trim();
+            textResponse = "";
+            log.info("Comando de áudio detectado no fluxo padrão: {}", audioUrl);
         }
 
         return new ChatResponseDTO(textResponse, null, audioUrl, "BOT", false, LocalDateTime.now());
     }
+
+    /**
+     * LÓGICA NOVA: Passa pelo construtor visual primeiro e, se não encontrar o usuário lá, cai na PNL
+     */
+    private ChatResponseDTO handleVisualFlowChat(UUID sessionId, UUID tenantId, String userTextContent) {
+        saveUserMessage(sessionId, tenantId, userTextContent);
+        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
+
+        if (isHumanHandoff(userTextContent)) {
+            return triggerHandoff(sessionId, tenantId);
+        }
+
+        // 1. TENTA O FLUXO ESTRUTURADO (Visual Builder)
+        String flowResponse = flowEngineService.processFlow(sessionId, tenantId, userTextContent);
+
+        String finalResponse;
+        if (flowResponse != null) {
+            // Cliente estava no funil!
+            finalResponse = flowResponse;
+        } else {
+            // 2. FALLBACK PARA NLP LIVRE
+            String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
+            finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
+        }
+
+        saveBotResponse(sessionId, tenantId, finalResponse);
+
+        String textResponse = finalResponse;
+        String audioUrl = null;
+        if (finalResponse != null && finalResponse.startsWith("AUDIO:")) {
+            audioUrl = finalResponse.substring(6).trim();
+            textResponse = "";
+            log.info("Comando de áudio detectado no fluxo visual: {}", audioUrl);
+        }
+
+        return new ChatResponseDTO(textResponse, null, audioUrl, "BOT", false, LocalDateTime.now());
+    }
+
+    // ==========================================
+    // MÉTODOS AUXILIARES
+    // ==========================================
 
     private void saveUserMessage(UUID sessionId, UUID tenantId, String userTextContent) {
         ChatMessageEntity userEntity = new ChatMessageEntity();

@@ -5,24 +5,18 @@ import com.rival.chatbot.dto.ChatRequestDTO;
 import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.repository.telegram.TelegramBotConfigRepository;
 import com.rival.chatbot.service.ChatService;
-import com.rival.chatbot.service.TextToSpeechService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.DefaultBotOptions;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
-import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.methods.send.SendVoice;
-import org.telegram.telegrambots.meta.api.objects.InputFile;
 import org.telegram.telegrambots.meta.api.objects.Update;
-import org.telegram.telegrambots.meta.api.objects.Voice;
 
 import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
-import java.io.File;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
@@ -33,15 +27,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
     private static final Logger log = LoggerFactory.getLogger(TelegramBotService.class);
     private final ChatService chatService;
     private final TelegramBotConfigRepository telegramBotConfigRepository;
-    private final TextToSpeechService textToSpeechService;
 
     public TelegramBotService(ChatService chatService,
-                              TelegramBotConfigRepository telegramBotConfigRepository,
-                              TextToSpeechService textToSpeechService) {
+                              TelegramBotConfigRepository telegramBotConfigRepository) {
         super(configureUnsafeSSLAndGetOptions(), "");
         this.chatService = chatService;
         this.telegramBotConfigRepository = telegramBotConfigRepository;
-        this.textToSpeechService = textToSpeechService;
     }
 
     @Override
@@ -70,7 +61,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                 if (update.getMessage().hasText()) {
                     String userText = update.getMessage().getText().trim();
-                    log.info("Mensagem recebida no Telegram do chatId {}: '{}'", chatId, userText);
+                    log.info("Texto recebido no Telegram: '{}'", userText);
 
                     if ("/start".equalsIgnoreCase(userText)) {
                         sendReply(chatId, "Olá! Sou o assistente virtual inteligente. Como posso ajudar?");
@@ -81,32 +72,13 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     ChatResponseDTO response = chatService.processMessage(chatRequest);
                     sendReply(chatId, response.response());
 
-                } else if (update.getMessage().hasVoice()) {
-                    Voice voice = update.getMessage().getVoice();
-                    log.info("Áudio recebido no Telegram do chatId {} (Duração: {}s)", chatId, voice.getDuration());
-
-                    GetFile getFileMethod = new GetFile();
-                    getFileMethod.setFileId(voice.getFileId());
-                    org.telegram.telegrambots.meta.api.objects.File telegramFile = execute(getFileMethod);
-
-                    File downloadedAudio = downloadFile(telegramFile, new File("./uploads/telegram_" + voice.getFileId() + ".ogg"));
-
-                    ChatResponseDTO response = chatService.processAudioFileMessage(sessionId, tenantId, downloadedAudio);
-
-                    // 1. Responde com o texto inteligente
-                    sendReply(chatId, response.response());
-
-                    // 2. Devolve o áudio processado para o usuário escutar no Telegram
-                    if (response.audioUrl() != null) {
-                        File savedAudioFile = new File(response.audioUrl());
-                        if (savedAudioFile.exists()) {
-                            sendVoiceReply(chatId, savedAudioFile);
-                        }
-                    }
+                } else if (update.getMessage().hasVoice() || update.getMessage().hasAudio()) {
+                    log.info("Áudio recebido no Telegram e ignorado. Solicitando texto ao usuário.");
+                    sendReply(chatId, "Desculpe, no momento estou configurado apenas para entender mensagens de texto. Por favor, digite sua dúvida.");
                 }
             }
         } catch (Exception e) {
-            log.error("Erro ao processar mensagem do Telegram", e);
+            log.error("Erro no TelegramBotService", e);
         }
     }
 
@@ -116,21 +88,8 @@ public class TelegramBotService extends TelegramLongPollingBot {
         message.setText(text);
         try {
             execute(message);
-            log.info("Resposta enviada com sucesso para o Telegram chatId {}", chatId);
         } catch (Exception e) {
-            log.error("Erro ao enviar resposta via Telegram API", e);
-        }
-    }
-
-    private void sendVoiceReply(Long chatId, File audioFile) {
-        SendVoice sendVoice = new SendVoice();
-        sendVoice.setChatId(chatId.toString());
-        sendVoice.setVoice(new InputFile(audioFile));
-        try {
-            execute(sendVoice);
-            log.info("Áudio de eco enviado com sucesso para o Telegram chatId {}", chatId);
-        } catch (Exception e) {
-            log.error("Erro ao enviar mensagem de voz via Telegram API", e);
+            log.error("Erro ao enviar texto", e);
         }
     }
 
@@ -149,9 +108,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
             HttpsURLConnection.setDefaultHostnameVerifier((hostname, session) -> true);
             SSLContext.setDefault(sc);
             System.setProperty("com.sun.net.ssl.checkRevocation", "false");
-        } catch (Exception e) {
-            log.error("Erro ao configurar SSL inseguro", e);
-        }
+        } catch (Exception e) {}
         return new DefaultBotOptions();
     }
 }

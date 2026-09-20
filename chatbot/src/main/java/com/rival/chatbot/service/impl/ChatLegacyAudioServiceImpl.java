@@ -89,6 +89,11 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
     }
 
     @Override
+    public ChatResponseDTO processFlowMessage(ChatRequestDTO chatRequestDTO) {
+        return null;
+    }
+
+    @Override
     @Transactional
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
         log.info("Processando áudio recebido para a sessão {}", sessionId);

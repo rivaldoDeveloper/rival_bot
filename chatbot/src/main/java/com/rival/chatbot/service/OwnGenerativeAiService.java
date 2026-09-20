@@ -34,16 +34,13 @@ public class OwnGenerativeAiService {
         String cleanContext = databaseContext.trim();
 
         // 1. Identificação de Intenção e Sentimento
-        boolean isGreeting = lowerPrompt.matches("^(oi|olá|ola|bom dia|boa tarde|boa noite|opa).*");
         boolean isQuestion = lowerPrompt.contains("?") || lowerPrompt.matches(".*\\b(como|qual|onde|por que|quanto|quando)\\b.*");
         boolean isConfirmation = lowerPrompt.matches("^(sim|ok|certo|entendi|perfeito).*");
 
         StringBuilder response = new StringBuilder();
 
-        // 2. Montagem Dinâmica de Frase
-        if (isGreeting) {
-            response.append("Olá! ");
-        } else if (isConfirmation) {
+        // 2. Montagem Dinâmica de Frase (Saudação fixa removida para evitar duplicidade com o banco)
+        if (isConfirmation) {
             response.append("Maravilha! ");
         }
 
@@ -74,7 +71,7 @@ public class OwnGenerativeAiService {
 
         if (!keywords.isEmpty()) {
             String subject = String.join(" ", keywords);
-            return "Eu consultei nossa base na nuvem, mas ainda não tenho detalhes específicos sobre '" + subject + "'. Posso ajudar com outro assunto?";
+            return "Eu consultei nossa base de dados, mas ainda não tenho detalhes específicos sobre '" + subject + "'. Posso ajudar com outro assunto?";
         }
 
         return "Analisei o que você disse, mas não encontrei diretrizes no banco de dados. Pode detalhar melhor?";

@@ -84,6 +84,11 @@ public class ChatLegacyGeminiServiceImpl implements ChatService{
         return handleChatFlow(sessionId, tenantId, finalContent);
     }
 
+    @Override
+    public ChatResponseDTO processFlowMessage(ChatRequestDTO chatRequestDTO) {
+        return null;
+    }
+
     private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent) {
         // 1. Salva a mensagem do usuário
         ChatMessageEntity userEntity = new ChatMessageEntity();
