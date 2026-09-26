@@ -56,7 +56,7 @@ public class FlowEngineService {
                 currentNodeId = "start";
                 customer.setCurrentNodeId(currentNodeId);
                 customerDataRepository.save(customer);
-                return getNodeText(flow, currentNodeId);
+                return getNodeContent(flow, currentNodeId);
             }
 
             // 3. Procura qual linha (Edge) bate com a resposta do cliente
@@ -75,14 +75,19 @@ public class FlowEngineService {
 
             // 4. Se o cliente respondeu errado, repete a pergunta atual
             if (nextNodeId == null) {
-                return "Opção inválida. " + getNodeText(flow, currentNodeId);
+                // Se a pessoa errar a opção, não devolvemos áudio, apenas um texto de erro e o conteúdo original do nó atual
+                String currentContent = getNodeContent(flow, currentNodeId);
+                if (currentContent.startsWith("AUDIO:")) {
+                    return "Opção inválida. Por favor, ouça o áudio novamente e digite uma opção válida.";
+                }
+                return "Opção inválida. " + currentContent;
             }
 
             // 5. Move o cliente para o novo Nó e salva no banco
             customer.setCurrentNodeId(nextNodeId);
             customerDataRepository.save(customer);
 
-            return getNodeText(flow, nextNodeId);
+            return getNodeContent(flow, nextNodeId);
 
         } catch (Exception e) {
             log.error("Erro ao processar máquina de estados do fluxo", e);
@@ -90,11 +95,19 @@ public class FlowEngineService {
         }
     }
 
-    private String getNodeText(FlowDefinition flow, String nodeId) {
+    /**
+     * Lê o conteúdo do Nó. Se for texto, devolve texto. Se for áudio, devolve o prefixo especial AUDIO:
+     */
+    private String getNodeContent(FlowDefinition flow, String nodeId) {
         return flow.nodes().stream()
                 .filter(n -> n.id().equals(nodeId))
                 .findFirst()
-                .map(n -> n.data().text())
+                .map(n -> {
+                    if ("audio".equalsIgnoreCase(n.type()) && n.data().audioUrl() != null) {
+                        return "AUDIO:" + n.data().audioUrl();
+                    }
+                    return n.data().text() != null ? n.data().text() : "Bloco sem conteúdo";
+                })
                 .orElse("Fim do atendimento.");
     }
 }

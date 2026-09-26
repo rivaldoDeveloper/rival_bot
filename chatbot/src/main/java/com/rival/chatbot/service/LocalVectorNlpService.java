@@ -41,6 +41,7 @@ public class LocalVectorNlpService {
         if (intents.isEmpty()) return "Ainda não fui treinado.";
 
         String cleanedInput = TextNormalizerUtil.cleanAndDeduplicate(userMessage);
+        int inputWordCount = cleanedInput.split("\\s+").length; // Conta o tamanho do texto do cliente
         float[] userInputVector = generateTextVector(cleanedInput);
 
         NlpIntentEntity bestMatch = null;
@@ -53,8 +54,26 @@ public class LocalVectorNlpService {
             if (intent.getKeywords() != null) {
                 for (String keyword : intent.getKeywords()) {
                     String cleanKw = TextNormalizerUtil.cleanAndDeduplicate(keyword);
-                    if (cleanedInput.contains(cleanKw)) {
-                        maxScore = Math.max(maxScore, 0.95);
+                    if (cleanKw.isBlank()) continue;
+
+                    int kwWordCount = cleanKw.split("\\s+").length; // Conta o tamanho da palavra-chave
+
+                    // Exige que a palavra-chave seja uma palavra isolada e completa na frase
+                    if (cleanedInput.matches(".*\\b" + java.util.regex.Pattern.quote(cleanKw) + "\\b.*")) {
+
+                        if (cleanedInput.equals(cleanKw)) {
+                            maxScore = Math.max(maxScore, 1.0); // Match perfeito e exato (100%)
+                        } else if (kwWordCount > 1) {
+                            maxScore = Math.max(maxScore, 0.90); // Expressão composta (ex: "comprar imóvel")
+                        } else {
+                            // É apenas UMA palavra-chave perdida no meio do texto
+                            if (inputWordCount <= 5 && cleanKw.length() > 3) {
+                                maxScore = Math.max(maxScore, 0.85); // Frase curta, palavra forte (Justo)
+                            } else {
+                                // TEXTO LONGO: Uma palavra solta não pode dominar a resposta! Força a nota para baixo.
+                                maxScore = Math.max(maxScore, 0.50);
+                            }
+                        }
                     } else {
                         float[] kwVector = generateTextVector(cleanKw);
                         maxScore = Math.max(maxScore, calculateCosineSimilarity(userInputVector, kwVector));
@@ -68,8 +87,10 @@ public class LocalVectorNlpService {
             }
         }
 
-        // Limiar de confiança da matemática vetorial (55%)
-        if (bestMatch != null && highestSimilarity >= 0.55 && !bestMatch.getResponses().isEmpty()) {
+        log.info("NLP Score Final: {} para a intenção: {}", highestSimilarity, bestMatch != null ? bestMatch.getName() : "Nenhuma");
+
+        // Limiar de confiança rigoroso (85%)
+        if (bestMatch != null && highestSimilarity >= 0.85 && !bestMatch.getResponses().isEmpty()) {
             List<String> responses = bestMatch.getResponses();
             String response = responses.get(new Random().nextInt(responses.size()));
             if (sessionId != null) lastResponseBySession.put(sessionId, response);

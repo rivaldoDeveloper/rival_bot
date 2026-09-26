@@ -10,4 +10,7 @@ import java.util.UUID;
 @Repository
 public interface WhatsAppAccountRepository extends JpaRepository<WhatsAppAccountEntity, UUID> {
     Optional<WhatsAppAccountEntity> findByPhoneNumberId(String phoneNumberId);
+
+    // Método atualizado para buscar pela instância da Evolution API
+    Optional<WhatsAppAccountEntity> findByInstanceName(String instanceName);
 }

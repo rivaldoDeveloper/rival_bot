@@ -21,10 +21,12 @@ public class WhatsAppAccountServiceImpl implements WhatsAppAccountService {
     @Override
     @Transactional
     public WhatsAppAccountEntity saveOrUpdateAccount(WhatsAppAccountEntity account) {
-        return repository.findByPhoneNumberId(account.getPhoneNumberId())
+        return repository.findByInstanceName(account.getInstanceName())
                 .map(existing -> {
-                    existing.setApiToken(account.getApiToken());
+                    // Atualizado com os novos campos da Evolution API
+                    existing.setEvolutionApiKey(account.getEvolutionApiKey());
                     existing.setDisplayPhoneNumber(account.getDisplayPhoneNumber());
+
                     if (account.getTenantId() != null) {
                         existing.setTenantId(account.getTenantId());
                     } else if (existing.getTenantId() == null) {

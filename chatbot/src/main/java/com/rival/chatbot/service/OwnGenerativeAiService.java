@@ -39,7 +39,7 @@ public class OwnGenerativeAiService {
 
         StringBuilder response = new StringBuilder();
 
-        // 2. Montagem Dinâmica de Frase (Saudação fixa removida para evitar duplicidade com o banco)
+        // 2. Montagem Dinâmica de Frase
         if (isConfirmation) {
             response.append("Maravilha! ");
         }
@@ -64,11 +64,18 @@ public class OwnGenerativeAiService {
     private String generateDynamicFallback(String userPrompt) {
         List<String> tokens = Arrays.asList(userPrompt.toLowerCase().split("[\\s\\p{Punct}]+"));
 
-        // Extrai palavras-chave ignorando preposições
+        // Extrai palavras-chave ignorando preposições e palavras curtas
         List<String> keywords = tokens.stream()
                 .filter(w -> w.length() > 3 && !w.equals("como") && !w.equals("qual") && !w.equals("quero"))
                 .collect(Collectors.toList());
 
+        // TRAVA DE SEGURANÇA: Se o texto for muito longo (mais de 3 palavras-chave),
+        // damos uma resposta educada sem repetir o testamento do cliente.
+        if (keywords.size() > 3) {
+            return "Ainda não tenho as diretrizes exatas para responder a essa questão de forma completa. Posso transferir para um especialista ou ajudar com outro assunto?";
+        }
+
+        // Se for uma pergunta curta (ex: "tem garagem?"), ele repete o assunto de forma natural
         if (!keywords.isEmpty()) {
             String subject = String.join(" ", keywords);
             return "Eu consultei nossa base de dados, mas ainda não tenho detalhes específicos sobre '" + subject + "'. Posso ajudar com outro assunto?";
