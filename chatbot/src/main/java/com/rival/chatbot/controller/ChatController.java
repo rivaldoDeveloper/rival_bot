@@ -88,4 +88,13 @@ public class ChatController {
                     .body("Erro interno: " + e.getMessage());
         }
     }
+
+    /**
+     * NOVO ENDPOINT: Recebe a mensagem digitada pelo Operador Humano no Painel
+     */
+    @PostMapping("/send-agent")
+    public ResponseEntity<ChatResponseDTO> sendAgentMessage(@Valid @RequestBody ChatRequestDTO request) {
+        ChatResponseDTO response = chatService.processAgentMessage(request);
+        return ResponseEntity.ok(response);
+    }
 }

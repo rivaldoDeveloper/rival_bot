@@ -1,13 +1,20 @@
 package com.rival.chatbot.service.impl;
 
 import com.rival.chatbot.domain.ChatMessageEntity;
+import com.rival.chatbot.domain.CustomerDataEntity;
 import com.rival.chatbot.dto.ChatRequestDTO;
 import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.mapper.ChatMapper;
 import com.rival.chatbot.repository.ChatMessageRepository;
+import com.rival.chatbot.repository.CustomerDataRepository;
+import com.rival.chatbot.repository.whatsapp.WhatsAppAccountRepository;
 import com.rival.chatbot.service.*;
+import com.rival.chatbot.service.telegram.TelegramBotService;
+import com.rival.chatbot.service.whatsapp.WhatsAppSenderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -22,7 +29,6 @@ import java.util.UUID;
 public class ChatServiceImpl implements ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
-
     private final ChatMessageRepository repository;
     private final ChatMapper chatMapper;
     private final LocalVectorNlpService localVectorNlpService;
@@ -32,6 +38,12 @@ public class ChatServiceImpl implements ChatService {
     private final OwnGenerativeAiService ownGenerativeAiService;
     private final FlowEngineService flowEngineService;
 
+    // Dependências para Disparo Bidirecional
+    private final CustomerDataRepository customerDataRepository;
+    private final WhatsAppSenderService whatsAppSenderService;
+    private final WhatsAppAccountRepository whatsAppAccountRepository;
+    private TelegramBotService telegramBotService;
+
     public ChatServiceImpl(ChatMessageRepository repository,
                            ChatMapper chatMapper,
                            LocalVectorNlpService localVectorNlpService,
@@ -39,7 +51,10 @@ public class ChatServiceImpl implements ChatService {
                            OcrService ocrService,
                            AudioTranscriptionService audioTranscriptionService,
                            OwnGenerativeAiService ownGenerativeAiService,
-                           FlowEngineService flowEngineService) {
+                           FlowEngineService flowEngineService,
+                           CustomerDataRepository customerDataRepository,
+                           WhatsAppSenderService whatsAppSenderService,
+                           WhatsAppAccountRepository whatsAppAccountRepository) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.localVectorNlpService = localVectorNlpService;
@@ -48,26 +63,58 @@ public class ChatServiceImpl implements ChatService {
         this.audioTranscriptionService = audioTranscriptionService;
         this.ownGenerativeAiService = ownGenerativeAiService;
         this.flowEngineService = flowEngineService;
+        this.customerDataRepository = customerDataRepository;
+        this.whatsAppSenderService = whatsAppSenderService;
+        this.whatsAppAccountRepository = whatsAppAccountRepository;
     }
 
-    // ==========================================
-    // CHAMADAS DOS CONTROLADORES
-    // ==========================================
+    // Injeção Tardia (Lazy) para evitar Dependência Circular
+    @Autowired
+    public void setTelegramBotService(@Lazy TelegramBotService telegramBotService) {
+        this.telegramBotService = telegramBotService;
+    }
 
     @Override
     @Transactional
     public ChatResponseDTO processMessage(ChatRequestDTO request) {
         String userTextContent = resolveInputContent(request);
-        // Chama a lógica original
-        return handleStandardChat(request.sessionId(), request.tenantId(), userTextContent);
+        return handleStandardChat(request.sessionId(), request.tenantId(), userTextContent, request.channel(), request.externalId());
     }
 
     @Override
     @Transactional
     public ChatResponseDTO processFlowMessage(ChatRequestDTO request) {
         String userTextContent = resolveInputContent(request);
-        // Chama a nova lógica de Fluxo Visual
-        return handleVisualFlowChat(request.sessionId(), request.tenantId(), userTextContent);
+        return handleVisualFlowChat(request.sessionId(), request.tenantId(), userTextContent, request.channel(), request.externalId());
+    }
+
+    @Override
+    @Transactional
+    public ChatResponseDTO processAgentMessage(ChatRequestDTO request) {
+        // 1. Grava no banco de dados para a interface Angular
+        saveBotResponse(request.sessionId(), request.tenantId(), request.message(), "AGENT");
+
+        // 2. Localiza o número do cliente (externalId)
+        customerDataRepository.findBySessionId(request.sessionId()).ifPresent(customer -> {
+            String externalId = customer.getExternalId();
+            if (externalId == null || externalId.isBlank()) {
+                log.warn("Sessão {} sem externalId associado. Impossível enviar mensagem.", request.sessionId());
+                return;
+            }
+
+            // 3. Efetua o disparo
+            if ("WHATSAPP".equals(customer.getChannel())) {
+                whatsAppAccountRepository.findAll().stream()
+                        .filter(acc -> acc.getTenantId().equals(request.tenantId()))
+                        .findFirst()
+                        .ifPresent(acc -> whatsAppSenderService.sendMessage(acc.getInstanceName(), acc.getEvolutionApiKey(), externalId, request.message()));
+            }
+            else if ("TELEGRAM".equals(customer.getChannel())) {
+                telegramBotService.sendMessageToClient(externalId, request.message());
+            }
+        });
+
+        return new ChatResponseDTO(request.message(), null, null, "AGENT", false, LocalDateTime.now());
     }
 
     @Override
@@ -90,91 +137,39 @@ public class ChatServiceImpl implements ChatService {
         if (finalContent.isBlank()) finalContent = "Imagem sem texto legível";
 
         // Mantém a imagem caindo no fluxo padrão
-        return handleStandardChat(sessionId, tenantId, finalContent);
+        return handleStandardChat(sessionId, tenantId, finalContent, "WHATSAPP", null);
     }
 
     @Override
     @Transactional
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
-        log.info("Processando áudio localmente na sessão {}", sessionId);
-        String transcribedText = audioTranscriptionService.transcribeAudioFile(audioFile);
-
-        if ("erro ao processar a fala".equals(transcribedText) || "áudio inaudível".equals(transcribedText)) {
-            String errorMsg = "Desculpe, o áudio ficou inaudível. Pode digitar ou repetir?";
-            saveBotResponse(sessionId, tenantId, errorMsg);
-            return new ChatResponseDTO(errorMsg, "BOT", false, LocalDateTime.now());
-        }
-
-        // Mantém o áudio caindo no fluxo padrão
-        return handleStandardChat(sessionId, tenantId, transcribedText.toLowerCase());
+        return handleStandardChat(sessionId, tenantId, "Áudio recebido", "WHATSAPP", null);
     }
 
-    // ==========================================
-    // ROTAS DE PROCESSAMENTO INTERNO
-    // ==========================================
-
-    /**
-     * LÓGICA ORIGINAL: Apenas PNL e Banco de Conhecimento (sem travas de fluxo)
-     */
-    private ChatResponseDTO handleStandardChat(UUID sessionId, UUID tenantId, String userTextContent) {
+    private ChatResponseDTO handleStandardChat(UUID sessionId, UUID tenantId, String userTextContent, String channel, String externalId) {
         saveUserMessage(sessionId, tenantId, userTextContent);
-        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
+        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
-        if (isHumanHandoff(userTextContent)) {
-            return triggerHandoff(sessionId, tenantId);
-        }
+        if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
 
         String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
         String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
 
-        saveBotResponse(sessionId, tenantId, finalResponse);
-
-        String textResponse = finalResponse;
-        String audioUrl = null;
-        if (finalResponse != null && finalResponse.startsWith("AUDIO:")) {
-            audioUrl = finalResponse.substring(6).trim();
-            textResponse = "";
-            log.info("Comando de áudio detectado no fluxo padrão: {}", audioUrl);
-        }
-
-        return new ChatResponseDTO(textResponse, null, audioUrl, "BOT", false, LocalDateTime.now());
+        saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
+        return checkAudioCommandAndReturn(finalResponse);
     }
 
-    /**
-     * LÓGICA NOVA: Passa pelo construtor visual primeiro e, se não encontrar o usuário lá, cai na PNL
-     */
-    private ChatResponseDTO handleVisualFlowChat(UUID sessionId, UUID tenantId, String userTextContent) {
+    private ChatResponseDTO handleVisualFlowChat(UUID sessionId, UUID tenantId, String userTextContent, String channel, String externalId) {
         saveUserMessage(sessionId, tenantId, userTextContent);
-        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
+        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
-        if (isHumanHandoff(userTextContent)) {
-            return triggerHandoff(sessionId, tenantId);
-        }
+        if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
 
-        // 1. TENTA O FLUXO ESTRUTURADO (Visual Builder)
         String flowResponse = flowEngineService.processFlow(sessionId, tenantId, userTextContent);
+        String finalResponse = (flowResponse != null) ? flowResponse : ownGenerativeAiService.generateOwnResponse(userTextContent, localVectorNlpService.processAndMatch(sessionId, userTextContent));
 
-        String finalResponse;
-        if (flowResponse != null) {
-            // Cliente estava no funil!
-            finalResponse = flowResponse;
-        } else {
-            // 2. FALLBACK PARA NLP LIVRE
-            String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
-            finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
-        }
-
-        saveBotResponse(sessionId, tenantId, finalResponse);
-
-        String textResponse = finalResponse;
-        String audioUrl = null;
-        if (finalResponse != null && finalResponse.startsWith("AUDIO:")) {
-            audioUrl = finalResponse.substring(6).trim();
-            textResponse = "";
-            log.info("Comando de áudio detectado no fluxo visual: {}", audioUrl);
-        }
-
-        return new ChatResponseDTO(textResponse, null, audioUrl, "BOT", false, LocalDateTime.now());
+        saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
+        return checkAudioCommandAndReturn(finalResponse);
     }
 
     // ==========================================
@@ -190,6 +185,16 @@ public class ChatServiceImpl implements ChatService {
         repository.save(userEntity);
     }
 
+    private void saveBotResponse(UUID sessionId, UUID tenantId, String responseContent, String senderType) {
+        ChatMessageEntity botEntity = new ChatMessageEntity();
+        botEntity.setSessionId(sessionId);
+        botEntity.setTenantId(tenantId);
+        botEntity.setContent(responseContent);
+        botEntity.setSenderType(senderType);
+        repository.save(botEntity);
+    }
+
+    // ✅ MÉTODO REINCLUÍDO
     private boolean isHumanHandoff(String userTextContent) {
         String lower = userTextContent.toLowerCase();
         return lower.contains("atendente") || lower.contains("humano") || lower.contains("suporte");
@@ -197,25 +202,23 @@ public class ChatServiceImpl implements ChatService {
 
     private ChatResponseDTO triggerHandoff(UUID sessionId, UUID tenantId) {
         String handoffResponse = "Entendido! Estou transferindo seu atendimento para um operador humano.";
-        saveBotResponse(sessionId, tenantId, handoffResponse);
+        saveBotResponse(sessionId, tenantId, handoffResponse, "BOT");
         return new ChatResponseDTO(handoffResponse, "BOT", true, LocalDateTime.now());
     }
 
     private String resolveInputContent(ChatRequestDTO request) {
-        if (request.base64Image() != null && !request.base64Image().isBlank()) {
-            String extractedText = ocrService.extractTextFromBase64(request.base64Image());
-            return extractedText.isBlank() ? "Imagem sem texto legível" : extractedText;
-        }
         return request.message() != null ? request.message() : "";
     }
 
-    private void saveBotResponse(UUID sessionId, UUID tenantId, String responseContent) {
-        ChatMessageEntity botEntity = new ChatMessageEntity();
-        botEntity.setSessionId(sessionId);
-        botEntity.setTenantId(tenantId);
-        botEntity.setContent(responseContent);
-        botEntity.setSenderType("BOT");
-        repository.save(botEntity);
+    private ChatResponseDTO checkAudioCommandAndReturn(String finalResponse) {
+        String textResponse = finalResponse;
+        String audioUrl = null;
+        if (finalResponse != null && finalResponse.startsWith("AUDIO:")) {
+            audioUrl = finalResponse.substring(6).trim();
+            textResponse = "";
+            log.info("Comando de áudio detectado: {}", audioUrl);
+        }
+        return new ChatResponseDTO(textResponse, null, audioUrl, "BOT", false, LocalDateTime.now());
     }
 
     private File saveFileToDisk(byte[] bytes, String originalFilename) throws IOException {

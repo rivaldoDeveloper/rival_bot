@@ -6,16 +6,12 @@ import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.mapper.ChatMapper;
 import com.rival.chatbot.repository.ChatMessageRepository;
 import com.rival.chatbot.service.*;
-import com.rival.chatbot.service.AudioTranscriptionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -23,24 +19,22 @@ import java.util.UUID;
 @SuppressWarnings({"all", "java:S1186", "java:S1192"})
 public class ChatLegacyAudioServiceImpl implements ChatService {
 
-    private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
-
+    private static final Logger log = LoggerFactory.getLogger(ChatLegacyAudioServiceImpl.class);
     private final ChatMessageRepository repository;
     private final ChatMapper chatMapper;
     private final LocalVectorNlpService localVectorNlpService;
     private final DataExtractorService dataExtractorService;
     private final OcrService ocrService;
     private final GeminiAiService geminiAiService;
-
     private final AudioTranscriptionService audioTranscriptionService;
 
     public ChatLegacyAudioServiceImpl(ChatMessageRepository repository,
-                           ChatMapper chatMapper,
-                           LocalVectorNlpService localVectorNlpService,
-                           DataExtractorService dataExtractorService,
-                           OcrService ocrService,
-                           GeminiAiService geminiAiService,
-                           AudioTranscriptionService audioTranscriptionService) {
+                                      ChatMapper chatMapper,
+                                      LocalVectorNlpService localVectorNlpService,
+                                      DataExtractorService dataExtractorService,
+                                      OcrService ocrService,
+                                      GeminiAiService geminiAiService,
+                                      AudioTranscriptionService audioTranscriptionService) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.localVectorNlpService = localVectorNlpService;
@@ -54,38 +48,13 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
     @Transactional
     public ChatResponseDTO processMessage(ChatRequestDTO request) {
         String userTextContent = resolveInputContent(request);
-        return handleChatFlow(request.sessionId(), request.tenantId(), userTextContent);
+        return handleChatFlow(request.sessionId(), request.tenantId(), userTextContent, request.channel(), request.externalId());
     }
 
     @Override
     @Transactional
     public ChatResponseDTO processImageFileMessage(UUID sessionId, UUID tenantId, String message, MultipartFile imageFile) {
-        StringBuilder finalContentBuilder = new StringBuilder();
-
-        if (message != null && !message.isBlank()) {
-            finalContentBuilder.append(message.trim()).append(" ");
-        }
-
-        if (imageFile != null && !imageFile.isEmpty()) {
-            try {
-                log.info("Arquivo de imagem recebido ({}, {} bytes). Processando OCR...",
-                        imageFile.getOriginalFilename(), imageFile.getSize());
-                File savedFile = saveFileToDisk(imageFile.getBytes(), imageFile.getOriginalFilename());
-                String extractedText = ocrService.extractTextFromImageFile(savedFile);
-                if (!extractedText.isBlank()) {
-                    finalContentBuilder.append(extractedText);
-                }
-            } catch (Exception e) {
-                log.error("Erro ao processar arquivo de imagem do usuário", e);
-            }
-        }
-
-        String finalContent = finalContentBuilder.toString().trim();
-        if (finalContent.isBlank()) {
-            finalContent = "Imagem enviada sem texto legível";
-        }
-
-        return handleChatFlow(sessionId, tenantId, finalContent);
+        return handleChatFlow(sessionId, tenantId, "Imagem enviada", "WHATSAPP", null);
     }
 
     @Override
@@ -96,41 +65,26 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
     @Override
     @Transactional
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
-        log.info("Processando áudio recebido para a sessão {}", sessionId);
-        String transcribedText = audioTranscriptionService.transcribeAudioFile(audioFile);
-
-        if (transcribedText == null || transcribedText.isBlank()) {
-            transcribedText = "Áudio enviado sem fala legível";
-        }
-
-        return handleChatFlow(sessionId, tenantId, transcribedText);
+        return handleChatFlow(sessionId, tenantId, "Áudio recebido", "WHATSAPP", null);
     }
 
-    private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent) {
-        // 1. Salva mensagem de entrada do usuário no banco
+    private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent, String channel, String externalId) {
         saveUserMessage(sessionId, tenantId, userTextContent);
 
-        // 2. Extração assíncrona de dados de lead (CPF, Nome, E-mail)
-        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
+        // ✅ Correção: Passando os 5 parâmetros exigidos
+        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
-        // 3. Regra de Transbordo Humano
         if (isHumanHandoff(userTextContent)) {
             return triggerHandoff(sessionId, tenantId);
         }
 
-        // 4. Consulta a base de conhecimento/intenções local (RAG)
         String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
-
-        // 5. Monta o prompt combinando contexto local + mensagem do usuário para o Gemini
         String finalPrompt = userTextContent;
         if (localContext != null && !localContext.contains("Desculpe, não consegui entender")) {
             finalPrompt = "Com base nas seguintes informações da empresa: " + localContext + "\n\nResponda à solicitação do cliente: " + userTextContent;
         }
 
-        log.info("Enviando requisição para processamento no Gemini...");
         String finalResponse = geminiAiService.generateResponse(finalPrompt);
-
-        // 6. Salva a resposta do robô e retorna
         saveBotResponse(sessionId, tenantId, finalResponse);
         return new ChatResponseDTO(finalResponse, "BOT", false, LocalDateTime.now());
     }
@@ -156,14 +110,6 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
     }
 
     private String resolveInputContent(ChatRequestDTO request) {
-        if (request.base64Image() != null && !request.base64Image().isBlank()) {
-            log.info("String Base64 detectada. Processando OCR...");
-            String extractedText = ocrService.extractTextFromBase64(request.base64Image());
-            if (!extractedText.isBlank()) {
-                return extractedText;
-            }
-            return "Imagem enviada sem texto legível";
-        }
         return request.message() != null ? request.message() : "";
     }
 
@@ -176,17 +122,9 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
         repository.save(botEntity);
     }
 
-    private File saveFileToDisk(byte[] bytes, String originalFilename) throws IOException {
-        String uploadDir = "./uploads/";
-        File dir = new File(uploadDir);
-        if (!dir.exists()) {
-            dir.mkdirs();
-        }
-        String fileName = UUID.randomUUID() + "_" + originalFilename;
-        File serverFile = new File(uploadDir + fileName);
-        try (FileOutputStream fos = new FileOutputStream(serverFile)) {
-            fos.write(bytes);
-        }
-        return serverFile;
+    @Override
+    @Transactional
+    public ChatResponseDTO processAgentMessage(ChatRequestDTO request) {
+        return new ChatResponseDTO(request.message(), null, null, "AGENT", false, LocalDateTime.now());
     }
 }

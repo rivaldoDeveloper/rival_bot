@@ -33,13 +33,22 @@ public class CustomerDataEntity {
     @Column(name = "current_node_id")
     private String currentNodeId;
 
+    //NOVO CAMPO: Identifica a plataforma do cliente (TELEGRAM ou WHATSAPP)
+    @Column(length = 20)
+    private String channel;
+
+    // NOVO CAMPO: Guarda o ID do Telegram ou Número do WhatsApp
+    @Column(name = "external_id")
+    private String externalId;
+
+    @Column(name = "unread_count")
+    private Integer unreadCount;
+
     public CustomerDataEntity() {}
 
     @PrePersist
     @PreUpdate
-    public void onUpdate() {
-        this.updatedAt = LocalDateTime.now();
-    }
+    public void onUpdate() { this.updatedAt = LocalDateTime.now(); }
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
@@ -73,4 +82,13 @@ public class CustomerDataEntity {
 
     public String getCurrentNodeId() { return currentNodeId; }
     public void setCurrentNodeId(String currentNodeId) { this.currentNodeId = currentNodeId; }
+
+    public Integer getUnreadCount() { return unreadCount; }
+    public void setUnreadCount(Integer unreadCount) { this.unreadCount = unreadCount; }
+
+    public String getChannel() { return channel; }
+    public void setChannel(String channel) { this.channel = channel; }
+
+    public String getExternalId() { return externalId; }
+    public void setExternalId(String externalId) { this.externalId = externalId; }
 }

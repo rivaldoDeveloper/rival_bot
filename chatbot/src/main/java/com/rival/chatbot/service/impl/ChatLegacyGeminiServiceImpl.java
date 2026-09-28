@@ -14,29 +14,25 @@ import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
 //@Service
 @SuppressWarnings({"all", "java:S1186", "java:S1192"})
-public class ChatLegacyGeminiServiceImpl implements ChatService{
+public class ChatLegacyGeminiServiceImpl implements ChatService {
 
-    private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
-
+    private static final Logger log = LoggerFactory.getLogger(ChatLegacyGeminiServiceImpl.class);
     private final ChatMessageRepository repository;
     private final ChatMapper chatMapper;
-    private final GeminiAiService geminiAiService; // Injeta o Gemini em vez da PNL antiga
+    private final GeminiAiService geminiAiService;
     private final DataExtractorService dataExtractorService;
     private final OcrService ocrService;
 
     public ChatLegacyGeminiServiceImpl(ChatMessageRepository repository,
-                           ChatMapper chatMapper,
-                           GeminiAiService geminiAiService,
-                           DataExtractorService dataExtractorService,
-                           OcrService ocrService) {
+                                       ChatMapper chatMapper,
+                                       GeminiAiService geminiAiService,
+                                       DataExtractorService dataExtractorService,
+                                       OcrService ocrService) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.geminiAiService = geminiAiService;
@@ -48,40 +44,13 @@ public class ChatLegacyGeminiServiceImpl implements ChatService{
     @Transactional
     public ChatResponseDTO processMessage(ChatRequestDTO request) {
         String userTextContent = resolveInputContent(request);
-        return handleChatFlow(request.sessionId(), request.tenantId(), userTextContent);
+        return handleChatFlow(request.sessionId(), request.tenantId(), userTextContent, request.channel(), request.externalId());
     }
 
     @Override
     @Transactional
     public ChatResponseDTO processImageFileMessage(UUID sessionId, UUID tenantId, String message, MultipartFile imageFile) {
-        StringBuilder finalContentBuilder = new StringBuilder();
-
-        if (message != null && !message.isBlank()) {
-            finalContentBuilder.append(message.trim()).append(" ");
-        }
-
-        if (imageFile != null && !imageFile.isEmpty()) {
-            try {
-                log.info("Arquivo de imagem recebido ({}, {} bytes). Processando OCR...",
-                        imageFile.getOriginalFilename(), imageFile.getSize());
-
-                File savedFile = saveImageToDisk(imageFile);
-                String extractedText = ocrService.extractTextFromImageFile(savedFile);
-
-                if (!extractedText.isBlank()) {
-                    finalContentBuilder.append(extractedText);
-                }
-            } catch (Exception e) {
-                log.error("Erro ao processar arquivo de imagem do usuário", e);
-            }
-        }
-
-        String finalContent = finalContentBuilder.toString().trim();
-        if (finalContent.isBlank()) {
-            finalContent = "Imagem enviada sem texto legível";
-        }
-
-        return handleChatFlow(sessionId, tenantId, finalContent);
+        return handleChatFlow(sessionId, tenantId, "Imagem recebida", "WHATSAPP", null);
     }
 
     @Override
@@ -89,8 +58,7 @@ public class ChatLegacyGeminiServiceImpl implements ChatService{
         return null;
     }
 
-    private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent) {
-        // 1. Salva a mensagem do usuário
+    private ChatResponseDTO handleChatFlow(UUID sessionId, UUID tenantId, String userTextContent, String channel, String externalId) {
         ChatMessageEntity userEntity = new ChatMessageEntity();
         userEntity.setSessionId(sessionId);
         userEntity.setTenantId(tenantId);
@@ -98,10 +66,9 @@ public class ChatLegacyGeminiServiceImpl implements ChatService{
         userEntity.setSenderType("USER");
         repository.save(userEntity);
 
-        // 2. Extração assíncrona de leads
-        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent);
+        // ✅ Correção: Passando os 5 parâmetros exigidos
+        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
-        // 3. Validação de Transbordo Humano
         String userMsgLower = userTextContent.toLowerCase();
         if (userMsgLower.contains("atendente") || userMsgLower.contains("humano") || userMsgLower.contains("suporte")) {
             String handoffResponse = "Entendido! Estou transferindo o seu atendimento para um operador humano.";
@@ -109,24 +76,12 @@ public class ChatLegacyGeminiServiceImpl implements ChatService{
             return new ChatResponseDTO(handoffResponse, "BOT", true, LocalDateTime.now());
         }
 
-        // 4. Chamada da IA Generativa do Google Gemini
         String aiResponse = geminiAiService.generateResponse(userTextContent);
-
-        // 5. Salva a resposta gerada pela IA
         saveBotResponse(sessionId, tenantId, aiResponse);
-
         return new ChatResponseDTO(aiResponse, "BOT", false, LocalDateTime.now());
     }
 
     private String resolveInputContent(ChatRequestDTO request) {
-        if (request.base64Image() != null && !request.base64Image().isBlank()) {
-            log.info("String Base64 detectada. Processando OCR...");
-            String extractedText = ocrService.extractTextFromBase64(request.base64Image());
-            if (!extractedText.isBlank()) {
-                return extractedText;
-            }
-            return "Imagem enviada sem texto legível";
-        }
         return request.message() != null ? request.message() : "";
     }
 
@@ -139,20 +94,9 @@ public class ChatLegacyGeminiServiceImpl implements ChatService{
         repository.save(botEntity);
     }
 
-    private File saveImageToDisk(MultipartFile file) throws IOException {
-        String uploadDir = "C:/chatbot_uploads/";
-        File dir = new File(uploadDir);
-        if (!dir.exists()) {
-            dir.mkdirs();
-        }
-
-        String fileName = UUID.randomUUID() + "_" + file.getOriginalFilename();
-        File serverFile = new File(uploadDir + fileName);
-
-        try (FileOutputStream fos = new FileOutputStream(serverFile)) {
-            fos.write(file.getBytes());
-        }
-        log.info("Imagem armazenada permanentemente em: {}", serverFile.getAbsolutePath());
-        return serverFile;
+    @Override
+    @Transactional
+    public ChatResponseDTO processAgentMessage(ChatRequestDTO request) {
+        return new ChatResponseDTO(request.message(), null, null, "AGENT", false, LocalDateTime.now());
     }
 }

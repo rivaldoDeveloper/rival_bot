@@ -57,6 +57,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 UUID tenantId = telegramBotConfigRepository.findFirstByActiveTrue()
                         .map(TelegramBotConfigEntity::getTenantId)
                         .orElseGet(() -> UUID.nameUUIDFromBytes("TELEGRAM_TENANT".getBytes()));
+
                 UUID sessionId = UUID.nameUUIDFromBytes(chatId.toString().getBytes());
 
                 if (update.getMessage().hasText()) {
@@ -68,10 +69,11 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         return;
                     }
 
-                    ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, userText);
+                    //  INJETA "TELEGRAM" NO REQUEST
+                    // ANTES: ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, userText, "TELEGRAM");
+                    ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, userText, "TELEGRAM", chatId.toString());
                     ChatResponseDTO response = chatService.processMessage(chatRequest);
                     sendReply(chatId, response.response());
-
                 } else if (update.getMessage().hasVoice() || update.getMessage().hasAudio()) {
                     log.info("Áudio recebido no Telegram e ignorado. Solicitando texto ao usuário.");
                     sendReply(chatId, "Desculpe, no momento estou configurado apenas para entender mensagens de texto. Por favor, digite sua dúvida.");
@@ -110,5 +112,9 @@ public class TelegramBotService extends TelegramLongPollingBot {
             System.setProperty("com.sun.net.ssl.checkRevocation", "false");
         } catch (Exception e) {}
         return new DefaultBotOptions();
+    }
+
+    public void sendMessageToClient(String chatId, String text) {
+        sendReply(Long.valueOf(chatId), text);
     }
 }

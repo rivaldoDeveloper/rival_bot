@@ -16,13 +16,14 @@ import java.util.regex.Pattern;
 public class DataExtractorService {
 
     private static final Logger log = LoggerFactory.getLogger(DataExtractorService.class);
+
     private final CustomerDataRepository repository;
 
     private static final Pattern CPF_PATTERN = Pattern.compile("\\b\\d{3}\\.?\\d{3}\\.?\\d{3}-?\\d{2}\\b");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,6}");
-    private static final Pattern NAME_PATTERN = Pattern.compile("(?i)(?:meu nome e|me chamo|sou o|sou a)\\s+([A-Za-zÀ-ÿ]+(?:\\s+[A-Za-zÀ-ÿ]+)*)");
-    private static final Pattern CITY_PATTERN = Pattern.compile("(?i)(?:moro em|cidade de|moro na cidade)\\s+([A-Za-zÀ-ÿ]+(?:\\s+[A-Za-zÀ-ÿ]+)*)");
-    private static final Pattern NEIGHBORHOOD_PATTERN = Pattern.compile("(?i)(?:bairro|no bairro)\\s+([A-Za-zÀ-ÿ]+(?:\\s+[A-Za-zÀ-ÿ]+)*)");
+    private static final Pattern NAME_PATTERN = Pattern.compile("(?i)(?:meu nome e|me chamo|sou o|sou a)\\s+([A-Za-z ]+(?:\\s+[A-Za-z ]+)*)");
+    private static final Pattern CITY_PATTERN = Pattern.compile("(?i)(?:moro em|cidade de|moro na cidade)\\s+([A-Za-z ]+(?:\\s+[A-Za-z ]+)*)");
+    private static final Pattern NEIGHBORHOOD_PATTERN = Pattern.compile("(?i)(?:bairro|no bairro)\\s+([A-Za-z ]+(?:\\s+[A-Za-z ]+)*)");
 
     public DataExtractorService(CustomerDataRepository repository) {
         this.repository = repository;
@@ -30,17 +31,35 @@ public class DataExtractorService {
 
     @Async
     @Transactional
-    public void extractAndSave(UUID sessionId, UUID tenantId, String message) {
+    public void extractAndSave(UUID sessionId, UUID tenantId, String message, String channel, String externalId) {
         try {
             CustomerDataEntity customerData = repository.findBySessionId(sessionId)
                     .orElseGet(() -> {
                         CustomerDataEntity entity = new CustomerDataEntity();
                         entity.setSessionId(sessionId);
                         entity.setTenantId(tenantId);
+                        entity.setUnreadCount(0);
                         return entity;
                     });
 
             boolean updated = false;
+
+            if (customerData.getUnreadCount() == null) {
+                customerData.setUnreadCount(0);
+            }
+            customerData.setUnreadCount(customerData.getUnreadCount() + 1);
+            updated = true;
+
+            if (channel != null && (customerData.getChannel() == null || !customerData.getChannel().equals(channel))) {
+                customerData.setChannel(channel);
+                updated = true;
+            }
+
+            // Grava o número real do cliente
+            if (externalId != null && (customerData.getExternalId() == null || !customerData.getExternalId().equals(externalId))) {
+                customerData.setExternalId(externalId);
+                updated = true;
+            }
 
             Matcher cpfMatcher = CPF_PATTERN.matcher(message);
             if (cpfMatcher.find()) {
@@ -60,24 +79,12 @@ public class DataExtractorService {
                 updated = true;
             }
 
-            Matcher cityMatcher = CITY_PATTERN.matcher(message);
-            if (cityMatcher.find()) {
-                customerData.setCity(cityMatcher.group(1));
-                updated = true;
-            }
-
-            Matcher neighborhoodMatcher = NEIGHBORHOOD_PATTERN.matcher(message);
-            if (neighborhoodMatcher.find()) {
-                customerData.setNeighborhood(neighborhoodMatcher.group(1));
-                updated = true;
-            }
-
             if (updated) {
                 repository.save(customerData);
-                log.info("Dados de lead extraídos e salvos com sucesso para a sessão {}", sessionId);
             }
+
         } catch (Exception e) {
-            log.error("Erro ao processar extração de dados em background para a sessão {}", sessionId, e);
+            log.error("Erro ao extrair dados", e);
         }
     }
 }

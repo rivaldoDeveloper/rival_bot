@@ -24,4 +24,6 @@ public interface ChatService {
     default ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
         return processMessage(new ChatRequestDTO(sessionId, tenantId, "Áudio enviado para processamento."));
     }
+
+    ChatResponseDTO processAgentMessage(ChatRequestDTO chatRequestDTO);
 }

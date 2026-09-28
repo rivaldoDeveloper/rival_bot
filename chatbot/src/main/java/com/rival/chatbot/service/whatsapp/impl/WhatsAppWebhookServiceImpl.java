@@ -66,7 +66,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             UUID sessionId = UUID.nameUUIDFromBytes(userPhoneNumber.getBytes());
 
-            ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, account.getTenantId(), userText);
+            // ANTES: ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, account.getTenantId(), userText, "WHATSAPP");
+            ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, account.getTenantId(), userText, "WHATSAPP", userPhoneNumber);
             ChatResponseDTO response = chatService.processFlowMessage(chatRequest);
 
             whatsAppSenderService.sendMessage(
