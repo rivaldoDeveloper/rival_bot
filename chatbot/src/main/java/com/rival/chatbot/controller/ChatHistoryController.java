@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,7 @@ public class ChatHistoryController {
 
     private final ChatMessageRepository chatMessageRepository;
     private final CustomerDataRepository customerDataRepository;
+
     private static final int DTO_INITIAL_CAPACITY = 10;
 
     public ChatHistoryController(ChatMessageRepository chatMessageRepository, CustomerDataRepository customerDataRepository) {
@@ -63,26 +65,54 @@ public class ChatHistoryController {
 
         for (CustomerDataEntity customer : customers) {
             String lastMsgText = lastMessageMap.getOrDefault(customer.getSessionId(), "Sessão iniciada");
+
+            // Pasamos el customer completo para poder usar updatedAt en la ordenación
             Map<String, Object> dto = getStringObjectMap(customer, lastMsgText);
+
+            // Añadimos temporalmente la fecha de actualización para usarla en el sort
+            dto.put("_sortDate", customer.getUpdatedAt());
 
             sessions.add(dto);
         }
+
+        // ORDENAMIENTO: Ordena la lista de forma descendente (los más recientes primero)
+        sessions.sort((s1, s2) -> {
+            java.time.LocalDateTime date1 = (java.time.LocalDateTime) s1.get("_sortDate");
+            java.time.LocalDateTime date2 = (java.time.LocalDateTime) s2.get("_sortDate");
+            if (date1 == null && date2 == null) return 0;
+            if (date1 == null) return 1;
+            if (date2 == null) return -1;
+            return date2.compareTo(date1); // Descendente
+        });
+
+        // Limpieza de la variable temporal usada para ordenar para no ensuciar el JSON de salida
+        sessions.forEach(s -> s.remove("_sortDate"));
 
         return ResponseEntity.ok(sessions);
     }
 
     private static Map<String, Object> getStringObjectMap(CustomerDataEntity customer, String lastMsgText) {
-        Map<String, Object> dto = new HashMap<>(DTO_INITIAL_CAPACITY);
-
+        Map<String, Object> dto = new HashMap<>(10);
         dto.put("sessionId", customer.getSessionId());
-        //ADICIONE ESTA LINHA AQUI: Passa o tenantId real da base de dados para o Angular
         dto.put("tenantId", customer.getTenantId());
-        dto.put("phoneNumber", customer.getName() != null ? customer.getName() : "Cliente " + customer.getSessionId().toString().substring(0, 5));
+
+        // Lógica de Nome Melhorada para o Site
+        String displayName = customer.getName();
+        String channel = customer.getChannel() != null ? customer.getChannel() : "WEB";
+
+        if (displayName == null || displayName.isBlank()) {
+            if ("WEB".equalsIgnoreCase(channel)) {
+                displayName = "Visitante Web " + customer.getSessionId().toString().substring(0, 4);
+            } else {
+                displayName = "Cliente " + customer.getSessionId().toString().substring(0, 5);
+            }
+        }
+
+        dto.put("phoneNumber", displayName);
         dto.put("lastMessage", lastMsgText);
         dto.put("unread", customer.getUnreadCount() != null ? customer.getUnreadCount() : 0);
         dto.put("isAiActive", true);
-        // Envia o canal de origem para o frontend exibir o ícone correto
-        dto.put("channel", customer.getChannel() != null ? customer.getChannel() : "WHATSAPP");
+        dto.put("channel", channel); // Envia WEB, WHATSAPP, TELEGRAM, etc.
         return dto;
     }
 }

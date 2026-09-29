@@ -94,8 +94,13 @@ public class ChatServiceImpl implements ChatService {
         // 1. Grava no banco de dados para a interface Angular
         saveBotResponse(request.sessionId(), request.tenantId(), request.message(), "AGENT");
 
-        // 2. Localiza o número do cliente (externalId)
+        // 2. Localiza o cliente para efetuar o disparo e atualizar o status
         customerDataRepository.findBySessionId(request.sessionId()).ifPresent(customer -> {
+
+            // FORÇA A ATUALIZAÇÃO DA DATA PARA A SESSÃO SUBIR NO PAINEL
+            customer.setUpdatedAt(LocalDateTime.now());
+            customerDataRepository.save(customer);
+
             String externalId = customer.getExternalId();
             if (externalId == null || externalId.isBlank()) {
                 log.warn("Sessão {} sem externalId associado. Impossível enviar mensagem.", request.sessionId());
