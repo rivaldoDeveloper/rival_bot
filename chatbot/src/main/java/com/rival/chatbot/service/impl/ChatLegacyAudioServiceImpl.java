@@ -127,4 +127,16 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
     public ChatResponseDTO processAgentMessage(ChatRequestDTO request) {
         return new ChatResponseDTO(request.message(), null, null, "AGENT", false, LocalDateTime.now());
     }
+
+    @Override
+    @Transactional
+    public ChatResponseDTO processAgentMediaMessage(UUID sessionId, UUID tenantId, String message, MultipartFile file) {
+        return new ChatResponseDTO(message, null, null, "AGENT", false, LocalDateTime.now());
+    }
+
+    @Override
+    @Transactional
+    public void deleteMessage(UUID id) {
+        repository.deleteById(id);
+    }
 }

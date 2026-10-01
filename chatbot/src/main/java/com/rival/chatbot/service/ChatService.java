@@ -26,4 +26,8 @@ public interface ChatService {
     }
 
     ChatResponseDTO processAgentMessage(ChatRequestDTO chatRequestDTO);
+
+    ChatResponseDTO processAgentMediaMessage(UUID sessionId, UUID tenantId, String message, MultipartFile file);
+
+    void deleteMessage(UUID id);
 }

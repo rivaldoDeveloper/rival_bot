@@ -12,7 +12,12 @@ import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.DefaultBotOptions;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.GetFile;
+import org.telegram.telegrambots.meta.api.methods.send.SendAudio;
+import org.telegram.telegrambots.meta.api.methods.send.SendDocument;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
+import org.telegram.telegrambots.meta.api.methods.send.SendPhoto;
+import org.telegram.telegrambots.meta.api.methods.send.SendVideo;
+import org.telegram.telegrambots.meta.api.objects.InputFile;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.User;
 
@@ -20,6 +25,8 @@ import javax.net.ssl.HttpsURLConnection;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+import java.io.File;
+import java.nio.file.Files;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
@@ -68,7 +75,6 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                 String userText = "";
                 String mediaUrl = null;
-                String botToken = this.getBotToken();
 
                 // 1. Captura Texto normal ou Legenda
                 if (update.getMessage().hasText()) {
@@ -77,20 +83,42 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     userText = update.getMessage().getCaption().trim();
                 }
 
-                // 2. Captura Animações (GIFs), Fotos ou Vídeos
-                if (update.getMessage().hasAnimation()) {
-                    String fileId = update.getMessage().getAnimation().getFileId();
-                    mediaUrl = getTelegramMediaUrl(fileId, botToken);
-                } else if (update.getMessage().hasPhoto()) {
+                // 2. Identifica o tipo de mídia e a extensão correta
+                String fileId = null;
+                String extension = ".bin";
+
+                if (update.getMessage().hasPhoto()) {
                     var photos = update.getMessage().getPhoto();
-                    String fileId = photos.get(photos.size() - 1).getFileId();
-                    mediaUrl = getTelegramMediaUrl(fileId, botToken);
+                    fileId = photos.get(photos.size() - 1).getFileId();
+                    extension = ".jpg";
                 } else if (update.getMessage().hasVideo()) {
-                    String fileId = update.getMessage().getVideo().getFileId();
-                    mediaUrl = getTelegramMediaUrl(fileId, botToken);
+                    fileId = update.getMessage().getVideo().getFileId();
+                    extension = ".mp4";
+                } else if (update.getMessage().hasVoice()) {
+                    fileId = update.getMessage().getVoice().getFileId();
+                    extension = ".ogg";
+                } else if (update.getMessage().hasAudio()) {
+                    fileId = update.getMessage().getAudio().getFileId();
+                    extension = ".mp3";
+                } else if (update.getMessage().hasAnimation()) {
+                    fileId = update.getMessage().getAnimation().getFileId();
+                    extension = ".mp4";
+                } else if (update.getMessage().hasDocument()) {
+                    fileId = update.getMessage().getDocument().getFileId();
+                    String fileName = update.getMessage().getDocument().getFileName();
+                    if (fileName != null && fileName.contains(".")) {
+                        extension = fileName.substring(fileName.lastIndexOf("."));
+                    } else {
+                        extension = ".pdf";
+                    }
                 }
 
-                // 3. Junta o texto com a URL da mídia
+                // ✅ 3. Faz o Download físico do Telegram para a sua pasta /uploads
+                if (fileId != null) {
+                    mediaUrl = downloadTelegramMedia(fileId, extension);
+                }
+
+                // 4. Junta o texto com a URL local gerada
                 String finalContent = userText;
                 if (mediaUrl != null) {
                     finalContent = finalContent.isEmpty() ? mediaUrl : finalContent + "\n" + mediaUrl;
@@ -130,15 +158,28 @@ public class TelegramBotService extends TelegramLongPollingBot {
         }
     }
 
-    // A MÁGICA ACONTECE AQUI: Pegar o link da imagem no Telegram
-    private String getTelegramMediaUrl(String fileId, String botToken) {
+    // ✅ NOVO MÉTODO: Usa a API interna do TelegramLongPollingBot para baixar o arquivo real
+    private String downloadTelegramMedia(String fileId, String extension) {
         try {
             GetFile getFileMethod = new GetFile();
             getFileMethod.setFileId(fileId);
-            org.telegram.telegrambots.meta.api.objects.File file = execute(getFileMethod);
-            return "https://api.telegram.org/file/bot" + botToken + "/" + file.getFilePath();
+            org.telegram.telegrambots.meta.api.objects.File telegramFile = execute(getFileMethod);
+
+            java.io.File dir = new java.io.File("uploads");
+            if (!dir.exists()) dir.mkdirs();
+
+            String fileName = "tg_" + UUID.randomUUID().toString().substring(0, 8) + extension;
+            java.io.File localFile = new java.io.File(dir, fileName);
+
+            // Método nativo para baixar o ficheiro para o seu disco rígido
+            downloadFile(telegramFile, localFile);
+
+            log.info("Arquivo Telegram salvo com sucesso: {}", fileName);
+
+            // Retorna o caminho limpo que o Angular reconhece
+            return "http://localhost:8080/uploads/" + fileName;
         } catch (Exception e) {
-            log.error("Erro ao converter FileId do Telegram em URL", e);
+            log.error("Erro ao baixar arquivo do Telegram", e);
             return null;
         }
     }
@@ -151,6 +192,43 @@ public class TelegramBotService extends TelegramLongPollingBot {
             execute(message);
         } catch (Exception e) {
             log.error("Erro ao enviar texto", e);
+        }
+    }
+
+    public void sendMediaToClient(String chatId, String caption, File file) {
+        try {
+            String mimeType = Files.probeContentType(file.toPath());
+
+            if (mimeType != null && mimeType.startsWith("image")) {
+                SendPhoto msg = new SendPhoto();
+                msg.setChatId(chatId);
+                msg.setPhoto(new InputFile(file));
+                if (caption != null && !caption.isBlank()) msg.setCaption(caption);
+                execute(msg);
+            }
+            else if (mimeType != null && mimeType.startsWith("video")) {
+                SendVideo msg = new SendVideo();
+                msg.setChatId(chatId);
+                msg.setVideo(new InputFile(file));
+                if (caption != null && !caption.isBlank()) msg.setCaption(caption);
+                execute(msg);
+            }
+            else if (mimeType != null && mimeType.startsWith("audio")) {
+                SendAudio msg = new SendAudio();
+                msg.setChatId(chatId);
+                msg.setAudio(new InputFile(file));
+                if (caption != null && !caption.isBlank()) msg.setCaption(caption);
+                execute(msg);
+            }
+            else {
+                SendDocument msg = new SendDocument();
+                msg.setChatId(chatId);
+                msg.setDocument(new InputFile(file));
+                if (caption != null && !caption.isBlank()) msg.setCaption(caption);
+                execute(msg);
+            }
+        } catch (Exception e) {
+            log.error("Erro ao enviar mídia via Telegram", e);
         }
     }
 

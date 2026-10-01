@@ -27,18 +27,12 @@ public class ChatController {
         this.chatService = chatService;
     }
 
-    /**
-     * ENDPOINT ORIGINAL: Processa a mensagem usando apenas o motor de Inteligência (PNL)
-     */
     @PostMapping("/send")
     public ResponseEntity<ChatResponseDTO> sendMessage(@Valid @RequestBody ChatRequestDTO request) {
         ChatResponseDTO response = chatService.processMessage(request);
         return ResponseEntity.ok(response);
     }
 
-    /**
-     * NOVO ENDPOINT: Processa a mensagem passando pela Árvore de Decisão (Flow Builder)
-     */
     @PostMapping("/send-flow")
     public ResponseEntity<ChatResponseDTO> sendFlowMessage(@Valid @RequestBody ChatRequestDTO request) {
         ChatResponseDTO response = chatService.processFlowMessage(request);
@@ -51,7 +45,6 @@ public class ChatController {
             @RequestParam("tenantId") UUID tenantId,
             @RequestParam(value = "message", required = false) String message,
             @RequestPart("image") MultipartFile imageFile) {
-
         ChatResponseDTO response = chatService.processImageFileMessage(sessionId, tenantId, message, imageFile);
         return ResponseEntity.ok(response);
     }
@@ -61,27 +54,21 @@ public class ChatController {
             @RequestParam("sessionId") UUID sessionId,
             @RequestParam("tenantId") UUID tenantId,
             @RequestParam("file") MultipartFile file) {
-
         try {
             if (file == null || file.isEmpty()) {
                 log.warn("Arquivo de áudio enviado está vazio.");
                 return ResponseEntity.badRequest().body("O arquivo de áudio não foi fornecido.");
             }
-
-            // Define o diretório de upload com caminho absoluto para evitar erros do Tomcat
             File tempDir = new File("uploads").getCanonicalFile();
             if (!tempDir.exists()) {
                 tempDir.mkdirs();
             }
-
             File tempFile = new File(tempDir, UUID.randomUUID() + "_" + file.getOriginalFilename());
             file.transferTo(tempFile);
-
             log.info("Arquivo de áudio salvo com sucesso em: {}", tempFile.getAbsolutePath());
 
             ChatResponseDTO response = chatService.processAudioFileMessage(sessionId, tenantId, tempFile);
             return ResponseEntity.ok(response);
-
         } catch (Exception e) {
             log.error("Erro ao processar envio de áudio via API REST: ", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -89,12 +76,26 @@ public class ChatController {
         }
     }
 
-    /**
-     * NOVO ENDPOINT: Recebe a mensagem digitada pelo Operador Humano no Painel
-     */
     @PostMapping("/send-agent")
     public ResponseEntity<ChatResponseDTO> sendAgentMessage(@Valid @RequestBody ChatRequestDTO request) {
         ChatResponseDTO response = chatService.processAgentMessage(request);
         return ResponseEntity.ok(response);
+    }
+
+    // NUEVO ENDPOINT: Recibe archivos adjuntos desde el panel del operador
+    @PostMapping(value = "/send-agent-media", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ChatResponseDTO> sendAgentMediaMessage(
+            @RequestParam("sessionId") UUID sessionId,
+            @RequestParam("tenantId") UUID tenantId,
+            @RequestParam(value = "message", required = false) String message,
+            @RequestPart("file") MultipartFile file) {
+        ChatResponseDTO response = chatService.processAgentMediaMessage(sessionId, tenantId, message, file);
+        return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteMessage(@PathVariable UUID id) {
+        chatService.deleteMessage(id);
+        return ResponseEntity.noContent().build();
     }
 }

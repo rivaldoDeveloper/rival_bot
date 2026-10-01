@@ -33,9 +33,10 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private final WhatsAppAccountRepository whatsAppAccountRepository;
     private final CustomerDataRepository customerDataRepository;
 
-    // ✅ Para chamar a Evolution API e baixar a mídia
+    // Para chamar a Evolution API e baixar a mídia
     @Value("${evolution.api.url:http://localhost:8081}")
     private String evolutionApiUrl;
+
     private final RestTemplate restTemplate = new RestTemplate();
 
     public WhatsAppWebhookServiceImpl(ChatService chatService,
@@ -74,7 +75,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             // 1. Extrai Texto
             String userText = extractUserText(msgObject);
 
-            // ✅ 2. Extrai Mídia (Se houver, baixa o arquivo e gera um Link Local)
+            // 2. Extrai Mídia (Se houver, baixa o arquivo e gera um Link Local)
             String mediaUrl = extractAndSaveMedia(instanceName, account.getEvolutionApiKey(), msgObject);
 
             // 3. Junta tudo para o Angular processar no Pipe
@@ -119,7 +120,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         }
     }
 
-    // ✅ NOVO MÉTODO: Faz o download da mídia da Evolution API e salva localmente
+    // MÉTODO: Faz o download da mídia da Evolution API e salva localmente
     @SuppressWarnings("unchecked")
     private String extractAndSaveMedia(String instanceName, String apiKey, Map<String, Object> msgObject) {
         try {
@@ -129,10 +130,12 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             String mediaType = null;
             String extension = ".bin";
 
+            // ✅ AGORA RECONHECE ÁUDIOS TAMBÉM!
             if (messageContent.containsKey("imageMessage")) { mediaType = "image"; extension = ".jpg"; }
             else if (messageContent.containsKey("videoMessage")) { mediaType = "video"; extension = ".mp4"; }
             else if (messageContent.containsKey("documentMessage")) { mediaType = "document"; extension = ".pdf"; }
             else if (messageContent.containsKey("stickerMessage")) { mediaType = "sticker"; extension = ".webp"; }
+            else if (messageContent.containsKey("audioMessage")) { mediaType = "audio"; extension = ".ogg"; }
 
             // Se não for mídia reconhecida, ignora
             if (mediaType == null) return null;
@@ -154,7 +157,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 String base64Data = (String) response.getBody().get("base64");
                 if (base64Data == null || base64Data.isBlank()) return null;
 
-                // Limpa o prefixo do base64 (ex: "data:image/jpeg;base64,...")
+                // Limpa o prefixo do base64
                 if (base64Data.contains(",")) {
                     base64Data = base64Data.split(",")[1];
                 }
@@ -205,26 +208,21 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     @SuppressWarnings("unchecked")
     private String extractUserText(Map<String, Object> msgObject) {
         if (msgObject == null) return null;
-
         Map<String, Object> messageContent = msgObject;
+
         if (msgObject.containsKey("message") && msgObject.get("message") instanceof Map) {
             messageContent = (Map<String, Object>) msgObject.get("message");
         }
 
-        // 1. Mensagem de texto simples
         if (messageContent.containsKey("conversation")) {
             return (String) messageContent.get("conversation");
         }
-
-        // 2. Mensagem longa, resposta a outra mensagem, ou WhatsApp Web (Bug corrigido)
         if (messageContent.containsKey("extendedTextMessage")) {
             Object extText = messageContent.get("extendedTextMessage");
             if (extText instanceof Map) {
                 return (String) ((Map<String, Object>) extText).get("text");
             }
         }
-
-        // 3. Texto que vem na legenda de uma imagem
         if (messageContent.containsKey("imageMessage")) {
             Object imgMsg = messageContent.get("imageMessage");
             if (imgMsg instanceof Map && ((Map<?, ?>) imgMsg).containsKey("caption")) {
@@ -237,6 +235,13 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 return (String) ((Map<String, Object>) vidMsg).get("caption");
             }
         }
-        return null;
+        if (messageContent.containsKey("documentMessage")) {
+            Object docMsg = messageContent.get("documentMessage");
+            if (docMsg instanceof Map && ((Map<?, ?>) docMsg).containsKey("caption")) {
+                return (String) ((Map<String, Object>) docMsg).get("caption");
+            }
+        }
+
+        return null; // Retorna nulo se for só áudio (o que é normal, a URL será extraída pelo outro método)
     }
 }

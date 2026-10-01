@@ -6,6 +6,13 @@ spring:
     username: neondb_owner
     password: ${NEON_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    hikari:
+        max-lifetime: 240000 # 4 minutos (menor que o limite do NeonDB)
+        keepalive-time: 30000
+  servlet:
+    multipart:
+       max-file-size: 50MB
+       max-request-size: 50MB
   jpa:
     hibernate:
       ddl-auto: update
@@ -31,3 +38,49 @@ telegram:
   bot:
     username: rival_atendimento_bot
     token: ${TELEGRAM_BOT_TOKEN}
+
+#spring:
+#  application:
+#    name: chatbot-api
+#  datasource:
+#    url: ${JDBC_POSTGRES:jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require}
+#    username: ${NEON_DB_USER:neondb_owner}
+#    password: ${NEON_DB_PASSWORD:SUA_SENHA_DO_NEON_AQUI}
+#    driver-class-name: org.postgresql.Driver
+#    hikari:
+#      max-lifetime: 240000 # 4 minutos (menor que o limite do NeonDB)
+#      keepalive-time: 30000
+#  servlet:
+#    multipart:
+#      max-file-size: 50MB
+#      max-request-size: 50MB
+#  jpa:
+#    hibernate:
+#      ddl-auto: update
+#    show-sql: true
+#    properties:
+#      hibernate:
+#        format_sql: true
+#        dialect: org.hibernate.dialect.PostgreSQLDialect
+#
+#  ai:
+#    openai:
+#      api-key: ${GEMINI_API_KEY:chave_ficticia_teste}
+#      base-url: "https://generativelanguage.googleapis.com/v1beta/openai"
+#      chat:
+#        options:
+#          model: "gemini-1.5-flash"
+#          temperature: 0.7
+#
+#whatsapp:
+#  api:
+#    verify-token: ${WHATSAPP_VERIFY_TOKEN:meu_token_secreto_123}
+#
+#tesseract:
+#  datapath: C:/tessdata
+#  language: por
+#
+#telegram:
+#  bot:
+#    username: rival_atendimento_bot
+#    token: ${TELEGRAM_BOT_TOKEN:}

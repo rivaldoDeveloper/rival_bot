@@ -29,6 +29,7 @@ import java.util.UUID;
 public class ChatServiceImpl implements ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
+
     private final ChatMessageRepository repository;
     private final ChatMapper chatMapper;
     private final LocalVectorNlpService localVectorNlpService;
@@ -96,8 +97,6 @@ public class ChatServiceImpl implements ChatService {
 
         // 2. Localiza o cliente para efetuar o disparo e atualizar o status
         customerDataRepository.findBySessionId(request.sessionId()).ifPresent(customer -> {
-
-            // FORÇA A ATUALIZAÇÃO DA DATA PARA A SESSÃO SUBIR NO PAINEL
             customer.setUpdatedAt(LocalDateTime.now());
             customerDataRepository.save(customer);
 
@@ -107,14 +106,13 @@ public class ChatServiceImpl implements ChatService {
                 return;
             }
 
-            // 3. Efetua o disparo
+            // 3. Efetua o disparo de texto puro
             if ("WHATSAPP".equals(customer.getChannel())) {
                 whatsAppAccountRepository.findAll().stream()
                         .filter(acc -> acc.getTenantId().equals(request.tenantId()))
                         .findFirst()
                         .ifPresent(acc -> whatsAppSenderService.sendMessage(acc.getInstanceName(), acc.getEvolutionApiKey(), externalId, request.message()));
-            }
-            else if ("TELEGRAM".equals(customer.getChannel())) {
+            } else if ("TELEGRAM".equals(customer.getChannel())) {
                 telegramBotService.sendMessageToClient(externalId, request.message());
             }
         });
@@ -124,31 +122,76 @@ public class ChatServiceImpl implements ChatService {
 
     @Override
     @Transactional
+    public ChatResponseDTO processAgentMediaMessage(UUID sessionId, UUID tenantId, String message, MultipartFile file) {
+        try {
+            // Guarda o arquivo na pasta uploads local
+            File savedFile = saveFileToDisk(file.getBytes(), file.getOriginalFilename());
+
+            // Cria o link que o Angular vai reconhecer e renderizar na bolha
+            String fileUrl = "http://localhost:8080/uploads/" + savedFile.getName();
+            String contentToSave = (message != null && !message.isBlank()) ? message + "\n" + fileUrl : fileUrl;
+
+            saveBotResponse(sessionId, tenantId, contentToSave, "AGENT");
+
+            // Localiza o cliente e envia o anexo real via API apropriada
+            customerDataRepository.findBySessionId(sessionId).ifPresent(customer -> {
+                customer.setUpdatedAt(LocalDateTime.now());
+                customerDataRepository.save(customer);
+
+                String externalId = customer.getExternalId();
+                if (externalId != null && !externalId.isBlank()) {
+                    if ("WHATSAPP".equals(customer.getChannel())) {
+                        whatsAppAccountRepository.findAll().stream()
+                                .filter(acc -> acc.getTenantId().equals(tenantId))
+                                .findFirst()
+                                .ifPresent(acc -> whatsAppSenderService.sendMediaMessage(
+                                        acc.getInstanceName(), acc.getEvolutionApiKey(), externalId, message, savedFile));
+                    } else if ("TELEGRAM".equals(customer.getChannel())) {
+                        // ✅ Chamada corrigida para a função sendMediaToClient no TelegramBotService
+                        telegramBotService.sendMediaToClient(externalId, message, savedFile);
+                    }
+                }
+            });
+
+            return new ChatResponseDTO(contentToSave, null, null, "AGENT", false, LocalDateTime.now());
+        } catch (Exception e) {
+            log.error("Erro processando envio de mídia pelo Agente", e);
+            throw new RuntimeException("Falha ao processar arquivo do agente.", e);
+        }
+    }
+
+    @Override
+    @Transactional
     public ChatResponseDTO processImageFileMessage(UUID sessionId, UUID tenantId, String message, MultipartFile imageFile) {
         StringBuilder finalContentBuilder = new StringBuilder();
+
         if (message != null && !message.isBlank()) {
-            finalContentBuilder.append(message.trim()).append(" ");
+            finalContentBuilder.append(message.trim()).append("\n");
         }
+
         if (imageFile != null && !imageFile.isEmpty()) {
             try {
+                // Guarda a imagem que veio do celular para o Angular ver
                 File savedFile = saveFileToDisk(imageFile.getBytes(), imageFile.getOriginalFilename());
-                String extractedText = ocrService.extractTextFromImageFile(savedFile);
-                if (!extractedText.isBlank()) finalContentBuilder.append(extractedText);
+                String fileUrl = "http://localhost:8080/uploads/" + savedFile.getName();
+                finalContentBuilder.append(fileUrl);
             } catch (Exception e) {
                 log.error("Erro ao processar imagem", e);
             }
         }
-        String finalContent = finalContentBuilder.toString().trim();
-        if (finalContent.isBlank()) finalContent = "Imagem sem texto legível";
 
-        // Mantém a imagem caindo no fluxo padrão
+        String finalContent = finalContentBuilder.toString().trim();
+        if (finalContent.isBlank()) finalContent = "Imagem não pôde ser guardada.";
+
         return handleStandardChat(sessionId, tenantId, finalContent, "WHATSAPP", null);
     }
 
     @Override
     @Transactional
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
-        return handleStandardChat(sessionId, tenantId, "Áudio recebido", "WHATSAPP", null);
+        // Gera o link do áudio para aparecer no painel
+        String fileUrl = "http://localhost:8080/uploads/" + audioFile.getName();
+        return handleStandardChat(sessionId, tenantId, fileUrl, "WHATSAPP", null);
     }
 
     private ChatResponseDTO handleStandardChat(UUID sessionId, UUID tenantId, String userTextContent, String channel, String externalId) {
@@ -199,7 +242,6 @@ public class ChatServiceImpl implements ChatService {
         repository.save(botEntity);
     }
 
-    // ✅ MÉTODO REINCLUÍDO
     private boolean isHumanHandoff(String userTextContent) {
         String lower = userTextContent.toLowerCase();
         return lower.contains("atendente") || lower.contains("humano") || lower.contains("suporte");
@@ -218,21 +260,42 @@ public class ChatServiceImpl implements ChatService {
     private ChatResponseDTO checkAudioCommandAndReturn(String finalResponse) {
         String textResponse = finalResponse;
         String audioUrl = null;
+
         if (finalResponse != null && finalResponse.startsWith("AUDIO:")) {
             audioUrl = finalResponse.substring(6).trim();
             textResponse = "";
             log.info("Comando de áudio detectado: {}", audioUrl);
         }
+
         return new ChatResponseDTO(textResponse, null, audioUrl, "BOT", false, LocalDateTime.now());
     }
 
+    // ✅ CORREÇÃO: Limpeza profunda do nome do ficheiro (remove acentos, espaços e acentuação)
     private File saveFileToDisk(byte[] bytes, String originalFilename) throws IOException {
         File dir = new File("./uploads/");
         if (!dir.exists()) dir.mkdirs();
-        File serverFile = new File(dir, UUID.randomUUID() + "_" + originalFilename);
+
+        String safeName = "media.bin";
+        if (originalFilename != null) {
+            // Converte para letras minúsculas, troca espaços por underscore, e tira acentos e cedilhas.
+            safeName = java.text.Normalizer.normalize(originalFilename, java.text.Normalizer.Form.NFD)
+                    .replaceAll("[^\\p{ASCII}]", "")
+                    .replaceAll("\\s+", "_")
+                    .replaceAll("[^a-zA-Z0-9\\.\\-]", "_")
+                    .toLowerCase();
+        }
+
+        File serverFile = new File(dir, UUID.randomUUID().toString().substring(0, 8) + "_" + safeName);
+
         try (FileOutputStream fos = new FileOutputStream(serverFile)) {
             fos.write(bytes);
         }
         return serverFile;
+    }
+
+    @Override
+    @Transactional
+    public void deleteMessage(UUID id) {
+        repository.deleteById(id);
     }
 }
