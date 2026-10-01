@@ -43,6 +43,9 @@ public class TelegramBotService extends TelegramLongPollingBot {
     public TelegramBotService(ChatService chatService,
                               CustomerDataRepository customerDataRepository,
                               TelegramBotConfigEntity botConfig) {
+        // ✅ NUVEM: Usamos o DefaultBotOptions nativo e seguro
+//        super(new DefaultBotOptions(), botConfig.getBotToken());
+
         super(configureUnsafeSSLAndGetOptions(), botConfig.getBotToken());
         this.chatService = chatService;
         this.customerDataRepository = customerDataRepository;
@@ -220,6 +223,8 @@ public class TelegramBotService extends TelegramLongPollingBot {
         }
     }
 
+//    2. Apague completamente o método gigante do fim do ficheiro:
+//Pode apagar com segurança todo o bloco private static DefaultBotOptions configureUnsafeSSLAndGetOptions() { ... }.
     private static DefaultBotOptions configureUnsafeSSLAndGetOptions() {
         try {
             TrustManager[] trustAllCerts = new TrustManager[]{
