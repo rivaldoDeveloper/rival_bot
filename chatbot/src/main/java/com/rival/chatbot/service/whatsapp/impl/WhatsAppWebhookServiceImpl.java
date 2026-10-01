@@ -120,7 +120,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         }
     }
 
-    // MÉTODO: Faz o download da mídia da Evolution API e salva localmente
+    // M TODO: Faz o download da m dia da Evolution API e salva localmente
     @SuppressWarnings("unchecked")
     private String extractAndSaveMedia(String instanceName, String apiKey, Map<String, Object> msgObject) {
         try {
@@ -130,12 +130,16 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             String mediaType = null;
             String extension = ".bin";
 
-            // ✅ AGORA RECONHECE ÁUDIOS TAMBÉM!
+            // ✅ IDENTIFICAÇÃO RIGOROSA DO TIPO DE MÍDIA RECEBIDA
             if (messageContent.containsKey("imageMessage")) { mediaType = "image"; extension = ".jpg"; }
             else if (messageContent.containsKey("videoMessage")) { mediaType = "video"; extension = ".mp4"; }
             else if (messageContent.containsKey("documentMessage")) { mediaType = "document"; extension = ".pdf"; }
             else if (messageContent.containsKey("stickerMessage")) { mediaType = "sticker"; extension = ".webp"; }
-            else if (messageContent.containsKey("audioMessage")) { mediaType = "audio"; extension = ".ogg"; }
+            else if (messageContent.containsKey("audioMessage")) {
+                mediaType = "audio";
+                // ✅ SUFIXO EXPLÍCITO DE VOZ
+                extension = "_voz.ogg";
+            }
 
             // Se não for mídia reconhecida, ignora
             if (mediaType == null) return null;
@@ -143,6 +147,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             log.info("Mídia detectada ({}). A baixar da Evolution API...", mediaType);
 
             String url = evolutionApiUrl + "/chat/getBase64FromMediaMessage/" + instanceName;
+
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("apikey", apiKey);
@@ -151,6 +156,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             body.put("message", msgObject);
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
             ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
 
             if (response.getBody() != null && response.getBody().containsKey("base64")) {
@@ -169,7 +175,6 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
                 String fileName = "wa_" + UUID.randomUUID().toString().substring(0, 8) + extension;
                 File file = new File(dir, fileName);
-
                 try (java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
                     fos.write(decodedBytes);
                 }

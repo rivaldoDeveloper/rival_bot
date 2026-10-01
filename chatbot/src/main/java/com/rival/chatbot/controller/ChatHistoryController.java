@@ -12,7 +12,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,8 +24,6 @@ public class ChatHistoryController {
 
     private final ChatMessageRepository chatMessageRepository;
     private final CustomerDataRepository customerDataRepository;
-
-    private static final int DTO_INITIAL_CAPACITY = 10;
 
     public ChatHistoryController(ChatMessageRepository chatMessageRepository, CustomerDataRepository customerDataRepository) {
         this.chatMessageRepository = chatMessageRepository;
@@ -82,7 +79,7 @@ public class ChatHistoryController {
             if (date1 == null && date2 == null) return 0;
             if (date1 == null) return 1;
             if (date2 == null) return -1;
-            return date2.compareTo(date1); // Descendente
+            return date2.compareTo(date1);
         });
 
         // Limpieza de la variable temporal usada para ordenar para no ensuciar el JSON de salida
@@ -96,8 +93,13 @@ public class ChatHistoryController {
         dto.put("sessionId", customer.getSessionId());
         dto.put("tenantId", customer.getTenantId());
 
-        // Lógica de Nome Melhorada para o Site
         String displayName = customer.getName();
+
+        // ✅ CORREÇÃO: Limpa qualquer nome de bot que tenha ficado salvo na base de dados antiga
+        if (displayName != null && displayName.contains("(")) {
+            displayName = displayName.replaceAll("\\s*\\(.*?\\)$", "").trim();
+        }
+
         String channel = customer.getChannel() != null ? customer.getChannel() : "WEB";
 
         if (displayName == null || displayName.isBlank()) {
@@ -112,7 +114,8 @@ public class ChatHistoryController {
         dto.put("lastMessage", lastMsgText);
         dto.put("unread", customer.getUnreadCount() != null ? customer.getUnreadCount() : 0);
         dto.put("isAiActive", true);
-        dto.put("channel", channel); // Envia WEB, WHATSAPP, TELEGRAM, etc.
+        dto.put("channel", channel);
+
         return dto;
     }
 }

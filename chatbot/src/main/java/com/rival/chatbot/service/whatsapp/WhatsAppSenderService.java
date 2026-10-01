@@ -46,48 +46,58 @@ public class WhatsAppSenderService {
 
         try {
             ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
-            log.info("Mensagem de texto enviada com sucesso via Evolution API. Status: {}", response.getStatusCode());
+            log.info("Mensagem de texto enviada via Evolution API. Status: {}", response.getStatusCode());
         } catch (ResourceAccessException e) {
             log.warn("Evolution API offline. MENSAGEM SIMULADA para {}: \"{}\"", toPhoneNumber, messageText);
         } catch (Exception e) {
-            log.error("Erro inesperado ao enviar mensagem via Evolution API", e);
+            log.error("Erro inesperado ao enviar mensagem", e);
         }
     }
 
-    // NUEVO MÉTODO: Envía medios a WhatsApp mediante Evolution API
     public void sendMediaMessage(String instanceName, String apikey, String toPhoneNumber, String caption, File file) {
         try {
-            String url = evolutionApiUrl + "/message/sendMedia/" + instanceName;
+            String fileName = file.getName().toLowerCase();
+            String mimeType = Files.probeContentType(file.toPath());
+            if (mimeType == null) mimeType = "application/octet-stream";
+
+            // ✅ SE FOR GRAVAÇÃO DO PAINEL, É ÁUDIO E PONTO FINAL (Ignora se o sistema achar que webm é vídeo)
+            boolean isAudio = mimeType.startsWith("audio") || fileName.contains("gravacao_audio") || fileName.endsWith(".ogg") || fileName.endsWith(".mp3") || fileName.endsWith(".webm");
+
+            byte[] fileContent = Files.readAllBytes(file.toPath());
+            String base64 = Base64.getEncoder().encodeToString(fileContent);
+
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("apikey", apikey);
 
-            // Determinar Mimetype y Tipo de Medio
-            String mimeType = Files.probeContentType(file.toPath());
-            if (mimeType == null) mimeType = "application/octet-stream";
-
-            String mediaType = "document";
-            if (mimeType.startsWith("image")) mediaType = "image";
-            else if (mimeType.startsWith("video")) mediaType = "video";
-            else if (mimeType.startsWith("audio")) mediaType = "audio";
-
-            // Convertir archivo a Base64 para el Payload
-            byte[] fileContent = Files.readAllBytes(file.toPath());
-            String base64 = Base64.getEncoder().encodeToString(fileContent);
-
             Map<String, Object> body = new HashMap<>();
             body.put("number", toPhoneNumber);
-            body.put("mediatype", mediaType);
-            body.put("mimetype", mimeType);
-            body.put("media", base64);
 
-            if (caption != null && !caption.isBlank()) {
-                body.put("caption", caption);
+            String url;
+
+            if (isAudio) {
+                // Endpoint da Evolution API para transformar em Voice Note verde nativa
+                url = evolutionApiUrl + "/message/sendWhatsAppAudio/" + instanceName;
+                body.put("audio", base64);
+                // Força o mimetype de áudio para a API do WhatsApp não se confundir
+                body.put("mimetype", "audio/webm");
+            } else {
+                url = evolutionApiUrl + "/message/sendMedia/" + instanceName;
+                String mediaType = "document";
+                if (mimeType.startsWith("image")) mediaType = "image";
+                else if (mimeType.startsWith("video")) mediaType = "video";
+
+                body.put("mediatype", mediaType);
+                body.put("mimetype", mimeType);
+                body.put("media", base64);
+                if (caption != null && !caption.isBlank()) {
+                    body.put("caption", caption);
+                }
             }
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
-            log.info("Mídia enviada via Evolution API. Status: {}", response.getStatusCode());
+            log.info("Mídia enviada via WhatsApp. Status: {}", response.getStatusCode());
 
         } catch (Exception e) {
             log.error("Erro ao enviar mídia via WhatsApp", e);

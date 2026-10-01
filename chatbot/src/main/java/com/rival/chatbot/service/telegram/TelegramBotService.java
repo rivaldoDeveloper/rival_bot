@@ -76,14 +76,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 String userText = "";
                 String mediaUrl = null;
 
-                // 1. Captura Texto normal ou Legenda
                 if (update.getMessage().hasText()) {
                     userText = update.getMessage().getText().trim();
                 } else if (update.getMessage().getCaption() != null) {
                     userText = update.getMessage().getCaption().trim();
                 }
 
-                // 2. Identifica o tipo de mídia e a extensão correta
                 String fileId = null;
                 String extension = ".bin";
 
@@ -113,12 +111,10 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     }
                 }
 
-                // ✅ 3. Faz o Download físico do Telegram para a sua pasta /uploads
                 if (fileId != null) {
                     mediaUrl = downloadTelegramMedia(fileId, extension);
                 }
 
-                // 4. Junta o texto com a URL local gerada
                 String finalContent = userText;
                 if (mediaUrl != null) {
                     finalContent = finalContent.isEmpty() ? mediaUrl : finalContent + "\n" + mediaUrl;
@@ -138,12 +134,12 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         String firstName = sender.getFirstName() != null ? sender.getFirstName() : "";
                         String lastName = sender.getLastName() != null ? sender.getLastName() : "";
                         String fullName = (firstName + " " + lastName).trim();
-                        String botName = this.getBotUsername();
 
                         if (!fullName.isEmpty()) {
                             customerDataRepository.findBySessionId(sessionId).ifPresent(customer -> {
-                                if (customer.getName() == null) {
-                                    customer.setName(fullName + " (" + botName + ")");
+                                // ✅ CORREÇÃO: Salva apenas o nome do cliente puro (ou corrige se estiver com parênteses)
+                                if (customer.getName() == null || customer.getName().contains("(")) {
+                                    customer.setName(fullName);
                                     customerDataRepository.save(customer);
                                 }
                             });
@@ -158,7 +154,6 @@ public class TelegramBotService extends TelegramLongPollingBot {
         }
     }
 
-    // ✅ NOVO MÉTODO: Usa a API interna do TelegramLongPollingBot para baixar o arquivo real
     private String downloadTelegramMedia(String fileId, String extension) {
         try {
             GetFile getFileMethod = new GetFile();
@@ -171,12 +166,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
             String fileName = "tg_" + UUID.randomUUID().toString().substring(0, 8) + extension;
             java.io.File localFile = new java.io.File(dir, fileName);
 
-            // Método nativo para baixar o ficheiro para o seu disco rígido
             downloadFile(telegramFile, localFile);
-
-            log.info("Arquivo Telegram salvo com sucesso: {}", fileName);
-
-            // Retorna o caminho limpo que o Angular reconhece
             return "http://localhost:8080/uploads/" + fileName;
         } catch (Exception e) {
             log.error("Erro ao baixar arquivo do Telegram", e);
@@ -197,7 +187,11 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
     public void sendMediaToClient(String chatId, String caption, File file) {
         try {
+            String fileName = file.getName().toLowerCase();
             String mimeType = Files.probeContentType(file.toPath());
+
+            boolean isAudio = (mimeType != null && mimeType.startsWith("audio")) || fileName.contains("gravacao_") || fileName.endsWith(".mp3") || fileName.endsWith(".webm") || fileName.endsWith(".ogg");
+            boolean isVideo = (mimeType != null && mimeType.startsWith("video")) && !isAudio;
 
             if (mimeType != null && mimeType.startsWith("image")) {
                 SendPhoto msg = new SendPhoto();
@@ -206,14 +200,14 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 if (caption != null && !caption.isBlank()) msg.setCaption(caption);
                 execute(msg);
             }
-            else if (mimeType != null && mimeType.startsWith("video")) {
+            else if (isVideo) {
                 SendVideo msg = new SendVideo();
                 msg.setChatId(chatId);
                 msg.setVideo(new InputFile(file));
                 if (caption != null && !caption.isBlank()) msg.setCaption(caption);
                 execute(msg);
             }
-            else if (mimeType != null && mimeType.startsWith("audio")) {
+            else if (isAudio) {
                 SendAudio msg = new SendAudio();
                 msg.setChatId(chatId);
                 msg.setAudio(new InputFile(file));
