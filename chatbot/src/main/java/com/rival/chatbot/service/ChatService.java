@@ -30,4 +30,6 @@ public interface ChatService {
     ChatResponseDTO processAgentMediaMessage(UUID sessionId, UUID tenantId, String message, MultipartFile file);
 
     void deleteMessage(UUID id);
+
+    ChatResponseDTO editMessage(UUID id, String newContent);
 }

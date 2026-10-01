@@ -98,4 +98,10 @@ public class ChatController {
         chatService.deleteMessage(id);
         return ResponseEntity.noContent().build();
     }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<ChatResponseDTO> editMessage(@PathVariable UUID id, @RequestBody java.util.Map<String, String> payload) {
+        String newContent = payload.get("content");
+        return ResponseEntity.ok(chatService.editMessage(id, newContent));
+    }
 }

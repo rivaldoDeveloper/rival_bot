@@ -95,9 +95,13 @@ public class ChatHistoryController {
 
         String displayName = customer.getName();
 
-        // ✅ CORREÇÃO: Limpa qualquer nome de bot que tenha ficado salvo na base de dados antiga
+        // ✅ CORREÇÃO: Agora apagamos o nome de fora e mantemos apenas o que está dentro dos parênteses (o Bot)
         if (displayName != null && displayName.contains("(")) {
-            displayName = displayName.replaceAll("\\s*\\(.*?\\)$", "").trim();
+            int start = displayName.indexOf("(");
+            int end = displayName.indexOf(")");
+            if (end > start) {
+                displayName = displayName.substring(start + 1, end).trim();
+            }
         }
 
         String channel = customer.getChannel() != null ? customer.getChannel() : "WEB";

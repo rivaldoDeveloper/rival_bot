@@ -111,4 +111,14 @@ public class ChatLegacyGeminiServiceImpl implements ChatService {
     public void deleteMessage(UUID id) {
         repository.deleteById(id);
     }
+
+    @Override
+    @Transactional
+    public ChatResponseDTO editMessage(UUID id, String newContent) {
+        ChatMessageEntity msg = repository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Mensagem não encontrada"));
+        msg.setContent(newContent);
+        repository.save(msg);
+        return new ChatResponseDTO(newContent, null, null, msg.getSenderType(), false, msg.getCreatedAt());
+    }
 }

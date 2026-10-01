@@ -134,12 +134,13 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         String firstName = sender.getFirstName() != null ? sender.getFirstName() : "";
                         String lastName = sender.getLastName() != null ? sender.getLastName() : "";
                         String fullName = (firstName + " " + lastName).trim();
+                        String botName = this.getBotUsername();
 
                         if (!fullName.isEmpty()) {
                             customerDataRepository.findBySessionId(sessionId).ifPresent(customer -> {
-                                // ✅ CORREÇÃO: Salva apenas o nome do cliente puro (ou corrige se estiver com parênteses)
-                                if (customer.getName() == null || customer.getName().contains("(")) {
-                                    customer.setName(fullName);
+                                // ✅ CORREÇÃO: Volta a incluir os parênteses com o nome do bot na base de dados para o Controller poder filtrar depois
+                                if (customer.getName() == null || !customer.getName().contains("(")) {
+                                    customer.setName(fullName + " (" + botName + ")");
                                     customerDataRepository.save(customer);
                                 }
                             });
