@@ -44,6 +44,9 @@ public class CustomerDataEntity {
     @Column(name = "unread_count")
     private Integer unreadCount;
 
+    @Column(name = "is_ai_active")
+    private Boolean isAiActive = true;
+
     public CustomerDataEntity() {}
 
     @PrePersist
@@ -91,4 +94,7 @@ public class CustomerDataEntity {
 
     public String getExternalId() { return externalId; }
     public void setExternalId(String externalId) { this.externalId = externalId; }
+
+    public Boolean getIsAiActive() { return isAiActive; }
+    public void setIsAiActive(Boolean isAiActive) { this.isAiActive = isAiActive; }
 }

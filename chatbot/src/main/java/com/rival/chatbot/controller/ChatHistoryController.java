@@ -117,7 +117,7 @@ public class ChatHistoryController {
         dto.put("phoneNumber", displayName);
         dto.put("lastMessage", lastMsgText);
         dto.put("unread", customer.getUnreadCount() != null ? customer.getUnreadCount() : 0);
-        dto.put("isAiActive", true);
+        dto.put("isAiActive", customer.getIsAiActive() != null ? customer.getIsAiActive() : true);
         dto.put("channel", channel);
 
         return dto;

@@ -31,5 +31,7 @@ public interface ChatService {
 
     void deleteMessage(UUID id);
 
+    void toggleAiMode(UUID sessionId, boolean isAiActive);
+
     ChatResponseDTO editMessage(UUID id, String newContent);
 }

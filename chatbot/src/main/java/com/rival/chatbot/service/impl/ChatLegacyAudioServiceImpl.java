@@ -5,6 +5,7 @@ import com.rival.chatbot.dto.ChatRequestDTO;
 import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.mapper.ChatMapper;
 import com.rival.chatbot.repository.ChatMessageRepository;
+import com.rival.chatbot.repository.CustomerDataRepository;
 import com.rival.chatbot.service.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +28,7 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
     private final OcrService ocrService;
     private final GeminiAiService geminiAiService;
     private final AudioTranscriptionService audioTranscriptionService;
+    private final CustomerDataRepository customerDataRepository;
 
     public ChatLegacyAudioServiceImpl(ChatMessageRepository repository,
                                       ChatMapper chatMapper,
@@ -34,7 +36,8 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
                                       DataExtractorService dataExtractorService,
                                       OcrService ocrService,
                                       GeminiAiService geminiAiService,
-                                      AudioTranscriptionService audioTranscriptionService) {
+                                      AudioTranscriptionService audioTranscriptionService,
+                                      CustomerDataRepository customerDataRepository) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.localVectorNlpService = localVectorNlpService;
@@ -42,6 +45,7 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
         this.ocrService = ocrService;
         this.geminiAiService = geminiAiService;
         this.audioTranscriptionService = audioTranscriptionService;
+        this.customerDataRepository = customerDataRepository;
     }
 
     @Override
@@ -148,5 +152,14 @@ public class ChatLegacyAudioServiceImpl implements ChatService {
         msg.setContent(newContent);
         repository.save(msg);
         return new ChatResponseDTO(newContent, null, null, msg.getSenderType(), false, msg.getCreatedAt());
+    }
+
+    @Override
+    @Transactional
+    public void toggleAiMode(UUID sessionId, boolean isAiActive) {
+        customerDataRepository.findBySessionId(sessionId).ifPresent(c -> {
+            c.setIsAiActive(isAiActive);
+            customerDataRepository.save(c);
+        });
     }
 }

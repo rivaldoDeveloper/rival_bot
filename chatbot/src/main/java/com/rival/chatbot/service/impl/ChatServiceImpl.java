@@ -198,11 +198,16 @@ public class ChatServiceImpl implements ChatService {
         saveUserMessage(sessionId, tenantId, userTextContent);
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
+        //  REGRA 1: Se o operador pausou a IA, o robô mantém-se em total silêncio
+        CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId).orElse(null);
+        if (customer != null && customer.getIsAiActive() != null && !customer.getIsAiActive()) {
+            return new ChatResponseDTO("", null, null, "BOT", false, LocalDateTime.now());
+        }
+
         if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
 
         String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
         String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
-
         saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
         return checkAudioCommandAndReturn(finalResponse);
     }
@@ -211,11 +216,16 @@ public class ChatServiceImpl implements ChatService {
         saveUserMessage(sessionId, tenantId, userTextContent);
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
+        //  REGRA 1 (No Fluxo Visual): Silêncio se o Operador assumiu
+        CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId).orElse(null);
+        if (customer != null && customer.getIsAiActive() != null && !customer.getIsAiActive()) {
+            return new ChatResponseDTO("", null, null, "BOT", false, LocalDateTime.now());
+        }
+
         if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
 
         String flowResponse = flowEngineService.processFlow(sessionId, tenantId, userTextContent);
         String finalResponse = (flowResponse != null) ? flowResponse : ownGenerativeAiService.generateOwnResponse(userTextContent, localVectorNlpService.processAndMatch(sessionId, userTextContent));
-
         saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
         return checkAudioCommandAndReturn(finalResponse);
     }
@@ -250,6 +260,13 @@ public class ChatServiceImpl implements ChatService {
     private ChatResponseDTO triggerHandoff(UUID sessionId, UUID tenantId) {
         String handoffResponse = "Entendido! Estou transferindo seu atendimento para um operador humano.";
         saveBotResponse(sessionId, tenantId, handoffResponse, "BOT");
+
+        //  REGRA 2: Desativa a IA automaticamente quando o cliente pede um humano!
+        customerDataRepository.findBySessionId(sessionId).ifPresent(c -> {
+            c.setIsAiActive(false);
+            customerDataRepository.save(c);
+        });
+
         return new ChatResponseDTO(handoffResponse, "BOT", true, LocalDateTime.now());
     }
 
@@ -307,5 +324,14 @@ public class ChatServiceImpl implements ChatService {
         msg.setContent(newContent);
         repository.save(msg);
         return new ChatResponseDTO(newContent, null, null, msg.getSenderType(), false, msg.getCreatedAt());
+    }
+
+    @Override
+    @Transactional
+    public void toggleAiMode(UUID sessionId, boolean isAiActive) {
+        customerDataRepository.findBySessionId(sessionId).ifPresent(c -> {
+            c.setIsAiActive(isAiActive);
+            customerDataRepository.save(c);
+        });
     }
 }

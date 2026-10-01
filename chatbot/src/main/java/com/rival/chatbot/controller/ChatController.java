@@ -104,4 +104,12 @@ public class ChatController {
         String newContent = payload.get("content");
         return ResponseEntity.ok(chatService.editMessage(id, newContent));
     }
+
+    //  ENDPOINT PARA LIGAR/DESLIGAR A IA
+    @PutMapping("/toggle-ai/{sessionId}")
+    public ResponseEntity<Void> toggleAiMode(@PathVariable UUID sessionId, @RequestBody java.util.Map<String, Boolean> payload) {
+        Boolean isAiActive = payload.get("isAiActive");
+        chatService.toggleAiMode(sessionId, isAiActive != null ? isAiActive : true);
+        return ResponseEntity.ok().build();
+    }
 }

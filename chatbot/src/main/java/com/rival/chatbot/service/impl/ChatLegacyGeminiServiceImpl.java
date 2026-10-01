@@ -5,6 +5,7 @@ import com.rival.chatbot.dto.ChatRequestDTO;
 import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.mapper.ChatMapper;
 import com.rival.chatbot.repository.ChatMessageRepository;
+import com.rival.chatbot.repository.CustomerDataRepository;
 import com.rival.chatbot.service.ChatService;
 import com.rival.chatbot.service.DataExtractorService;
 import com.rival.chatbot.service.GeminiAiService;
@@ -27,17 +28,20 @@ public class ChatLegacyGeminiServiceImpl implements ChatService {
     private final GeminiAiService geminiAiService;
     private final DataExtractorService dataExtractorService;
     private final OcrService ocrService;
+    private final CustomerDataRepository customerDataRepository;
 
     public ChatLegacyGeminiServiceImpl(ChatMessageRepository repository,
                                        ChatMapper chatMapper,
                                        GeminiAiService geminiAiService,
                                        DataExtractorService dataExtractorService,
-                                       OcrService ocrService) {
+                                       OcrService ocrService,
+                                       CustomerDataRepository customerDataRepository) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.geminiAiService = geminiAiService;
         this.dataExtractorService = dataExtractorService;
         this.ocrService = ocrService;
+        this.customerDataRepository = customerDataRepository;
     }
 
     @Override
@@ -120,5 +124,14 @@ public class ChatLegacyGeminiServiceImpl implements ChatService {
         msg.setContent(newContent);
         repository.save(msg);
         return new ChatResponseDTO(newContent, null, null, msg.getSenderType(), false, msg.getCreatedAt());
+    }
+
+    @Override
+    @Transactional
+    public void toggleAiMode(UUID sessionId, boolean isAiActive) {
+        customerDataRepository.findBySessionId(sessionId).ifPresent(c -> {
+            c.setIsAiActive(isAiActive);
+            customerDataRepository.save(c);
+        });
     }
 }

@@ -5,6 +5,7 @@ import com.rival.chatbot.dto.ChatRequestDTO;
 import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.mapper.ChatMapper;
 import com.rival.chatbot.repository.ChatMessageRepository;
+import com.rival.chatbot.repository.CustomerDataRepository;
 import com.rival.chatbot.service.ChatService;
 import com.rival.chatbot.service.DataExtractorService;
 import com.rival.chatbot.service.NlpEngineService;
@@ -27,17 +28,20 @@ public class ChatLegacyServiceImpl implements ChatService {
     private final NlpEngineService nlpEngineService;
     private final DataExtractorService dataExtractorService;
     private final OcrService ocrService;
+    private final CustomerDataRepository customerDataRepository;
 
     public ChatLegacyServiceImpl(ChatMessageRepository repository,
                                  ChatMapper chatMapper,
                                  NlpEngineService nlpEngineService,
                                  DataExtractorService dataExtractorService,
-                                 OcrService ocrService) {
+                                 OcrService ocrService,
+                                 CustomerDataRepository customerDataRepository) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.nlpEngineService = nlpEngineService;
         this.dataExtractorService = dataExtractorService;
         this.ocrService = ocrService;
+        this.customerDataRepository = customerDataRepository;
     }
 
     @Override
@@ -121,5 +125,14 @@ public class ChatLegacyServiceImpl implements ChatService {
         msg.setContent(newContent);
         repository.save(msg);
         return new ChatResponseDTO(newContent, null, null, msg.getSenderType(), false, msg.getCreatedAt());
+    }
+
+    @Override
+    @Transactional
+    public void toggleAiMode(UUID sessionId, boolean isAiActive) {
+        customerDataRepository.findBySessionId(sessionId).ifPresent(c -> {
+            c.setIsAiActive(isAiActive);
+            customerDataRepository.save(c);
+        });
     }
 }
