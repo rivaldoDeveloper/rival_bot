@@ -1,5 +1,6 @@
 package com.rival.chatbot.service.impl;
 
+import com.rival.chatbot.config.TelegramInitializerConfig;
 import com.rival.chatbot.domain.ChatMessageEntity;
 import com.rival.chatbot.domain.CustomerDataEntity;
 import com.rival.chatbot.dto.ChatRequestDTO;
@@ -13,8 +14,6 @@ import com.rival.chatbot.service.telegram.TelegramBotService;
 import com.rival.chatbot.service.whatsapp.WhatsAppSenderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -43,7 +42,8 @@ public class ChatServiceImpl implements ChatService {
     private final CustomerDataRepository customerDataRepository;
     private final WhatsAppSenderService whatsAppSenderService;
     private final WhatsAppAccountRepository whatsAppAccountRepository;
-    private TelegramBotService telegramBotService;
+
+    // ❌ REMOVIDA: A injeção do @Lazy TelegramBotService, já não precisamos disso!
 
     public ChatServiceImpl(ChatMessageRepository repository,
                            ChatMapper chatMapper,
@@ -69,12 +69,6 @@ public class ChatServiceImpl implements ChatService {
         this.whatsAppAccountRepository = whatsAppAccountRepository;
     }
 
-    // Injeção Tardia (Lazy) para evitar Dependência Circular
-    @Autowired
-    public void setTelegramBotService(@Lazy TelegramBotService telegramBotService) {
-        this.telegramBotService = telegramBotService;
-    }
-
     @Override
     @Transactional
     public ChatResponseDTO processMessage(ChatRequestDTO request) {
@@ -92,28 +86,31 @@ public class ChatServiceImpl implements ChatService {
     @Override
     @Transactional
     public ChatResponseDTO processAgentMessage(ChatRequestDTO request) {
-        // 1. Grava no banco de dados para a interface Angular
         saveBotResponse(request.sessionId(), request.tenantId(), request.message(), "AGENT");
 
-        // 2. Localiza o cliente para efetuar o disparo e atualizar o status
         customerDataRepository.findBySessionId(request.sessionId()).ifPresent(customer -> {
             customer.setUpdatedAt(LocalDateTime.now());
             customerDataRepository.save(customer);
 
             String externalId = customer.getExternalId();
             if (externalId == null || externalId.isBlank()) {
-                log.warn("Sessão {} sem externalId associado. Impossível enviar mensagem.", request.sessionId());
+                log.warn("Sessão {} sem externalId associado.", request.sessionId());
                 return;
             }
 
-            // 3. Efetua o disparo de texto puro
             if ("WHATSAPP".equals(customer.getChannel())) {
                 whatsAppAccountRepository.findAll().stream()
                         .filter(acc -> acc.getTenantId().equals(request.tenantId()))
                         .findFirst()
                         .ifPresent(acc -> whatsAppSenderService.sendMessage(acc.getInstanceName(), acc.getEvolutionApiKey(), externalId, request.message()));
             } else if ("TELEGRAM".equals(customer.getChannel())) {
-                telegramBotService.sendMessageToClient(externalId, request.message());
+                // ✅ ROTEAMENTO DINÂMICO MULTI-BOT
+                TelegramBotService botToUse = findTelegramBotByCustomer(customer);
+                if (botToUse != null) {
+                    botToUse.sendMessageToClient(externalId, request.message());
+                } else {
+                    log.error("Nenhum robô do Telegram encontrado para enviar a mensagem.");
+                }
             }
         });
 
@@ -124,16 +121,12 @@ public class ChatServiceImpl implements ChatService {
     @Transactional
     public ChatResponseDTO processAgentMediaMessage(UUID sessionId, UUID tenantId, String message, MultipartFile file) {
         try {
-            // Guarda o arquivo na pasta uploads local
             File savedFile = saveFileToDisk(file.getBytes(), file.getOriginalFilename());
-
-            // Cria o link que o Angular vai reconhecer e renderizar na bolha
             String fileUrl = "http://localhost:8080/uploads/" + savedFile.getName();
             String contentToSave = (message != null && !message.isBlank()) ? message + "\n" + fileUrl : fileUrl;
 
             saveBotResponse(sessionId, tenantId, contentToSave, "AGENT");
 
-            // Localiza o cliente e envia o anexo real via API apropriada
             customerDataRepository.findBySessionId(sessionId).ifPresent(customer -> {
                 customer.setUpdatedAt(LocalDateTime.now());
                 customerDataRepository.save(customer);
@@ -147,8 +140,11 @@ public class ChatServiceImpl implements ChatService {
                                 .ifPresent(acc -> whatsAppSenderService.sendMediaMessage(
                                         acc.getInstanceName(), acc.getEvolutionApiKey(), externalId, message, savedFile));
                     } else if ("TELEGRAM".equals(customer.getChannel())) {
-                        // ✅ Chamada corrigida para a função sendMediaToClient no TelegramBotService
-                        telegramBotService.sendMediaToClient(externalId, message, savedFile);
+                        // ✅ ROTEAMENTO DINÂMICO MULTI-BOT
+                        TelegramBotService botToUse = findTelegramBotByCustomer(customer);
+                        if (botToUse != null) {
+                            botToUse.sendMediaToClient(externalId, message, savedFile);
+                        }
                     }
                 }
             });
@@ -164,14 +160,11 @@ public class ChatServiceImpl implements ChatService {
     @Transactional
     public ChatResponseDTO processImageFileMessage(UUID sessionId, UUID tenantId, String message, MultipartFile imageFile) {
         StringBuilder finalContentBuilder = new StringBuilder();
-
         if (message != null && !message.isBlank()) {
             finalContentBuilder.append(message.trim()).append("\n");
         }
-
         if (imageFile != null && !imageFile.isEmpty()) {
             try {
-                // Guarda a imagem que veio do celular para o Angular ver
                 File savedFile = saveFileToDisk(imageFile.getBytes(), imageFile.getOriginalFilename());
                 String fileUrl = "http://localhost:8080/uploads/" + savedFile.getName();
                 finalContentBuilder.append(fileUrl);
@@ -179,17 +172,14 @@ public class ChatServiceImpl implements ChatService {
                 log.error("Erro ao processar imagem", e);
             }
         }
-
         String finalContent = finalContentBuilder.toString().trim();
         if (finalContent.isBlank()) finalContent = "Imagem não pôde ser guardada.";
-
         return handleStandardChat(sessionId, tenantId, finalContent, "WHATSAPP", null);
     }
 
     @Override
     @Transactional
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
-        // Gera o link do áudio para aparecer no painel
         String fileUrl = "http://localhost:8080/uploads/" + audioFile.getName();
         return handleStandardChat(sessionId, tenantId, fileUrl, "WHATSAPP", null);
     }
@@ -198,7 +188,6 @@ public class ChatServiceImpl implements ChatService {
         saveUserMessage(sessionId, tenantId, userTextContent);
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
-        //  REGRA 1: Se o operador pausou a IA, o robô mantém-se em total silêncio
         CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId).orElse(null);
         if (customer != null && customer.getIsAiActive() != null && !customer.getIsAiActive()) {
             return new ChatResponseDTO("", null, null, "BOT", false, LocalDateTime.now());
@@ -216,7 +205,6 @@ public class ChatServiceImpl implements ChatService {
         saveUserMessage(sessionId, tenantId, userTextContent);
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
-        //  REGRA 1 (No Fluxo Visual): Silêncio se o Operador assumiu
         CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId).orElse(null);
         if (customer != null && customer.getIsAiActive() != null && !customer.getIsAiActive()) {
             return new ChatResponseDTO("", null, null, "BOT", false, LocalDateTime.now());
@@ -260,13 +248,10 @@ public class ChatServiceImpl implements ChatService {
     private ChatResponseDTO triggerHandoff(UUID sessionId, UUID tenantId) {
         String handoffResponse = "Entendido! Estou transferindo seu atendimento para um operador humano.";
         saveBotResponse(sessionId, tenantId, handoffResponse, "BOT");
-
-        //  REGRA 2: Desativa a IA automaticamente quando o cliente pede um humano!
         customerDataRepository.findBySessionId(sessionId).ifPresent(c -> {
             c.setIsAiActive(false);
             customerDataRepository.save(c);
         });
-
         return new ChatResponseDTO(handoffResponse, "BOT", true, LocalDateTime.now());
     }
 
@@ -277,33 +262,26 @@ public class ChatServiceImpl implements ChatService {
     private ChatResponseDTO checkAudioCommandAndReturn(String finalResponse) {
         String textResponse = finalResponse;
         String audioUrl = null;
-
         if (finalResponse != null && finalResponse.startsWith("AUDIO:")) {
             audioUrl = finalResponse.substring(6).trim();
             textResponse = "";
             log.info("Comando de áudio detectado: {}", audioUrl);
         }
-
         return new ChatResponseDTO(textResponse, null, audioUrl, "BOT", false, LocalDateTime.now());
     }
 
-    // ✅ CORREÇÃO: Limpeza profunda do nome do ficheiro (remove acentos, espaços e acentuação)
     private File saveFileToDisk(byte[] bytes, String originalFilename) throws IOException {
         File dir = new File("./uploads/");
         if (!dir.exists()) dir.mkdirs();
-
         String safeName = "media.bin";
         if (originalFilename != null) {
-            // Converte para letras minúsculas, troca espaços por underscore, e tira acentos e cedilhas.
             safeName = java.text.Normalizer.normalize(originalFilename, java.text.Normalizer.Form.NFD)
                     .replaceAll("[^\\p{ASCII}]", "")
                     .replaceAll("\\s+", "_")
                     .replaceAll("[^a-zA-Z0-9\\.\\-]", "_")
                     .toLowerCase();
         }
-
         File serverFile = new File(dir, UUID.randomUUID().toString().substring(0, 8) + "_" + safeName);
-
         try (FileOutputStream fos = new FileOutputStream(serverFile)) {
             fos.write(bytes);
         }
@@ -333,5 +311,21 @@ public class ChatServiceImpl implements ChatService {
             c.setIsAiActive(isAiActive);
             customerDataRepository.save(c);
         });
+    }
+
+    // ✅ NOVO MÉTODO: Função auxiliar para descobrir o bot certo a utilizar
+    private TelegramBotService findTelegramBotByCustomer(CustomerDataEntity customer) {
+        String botUsername = null;
+        if (customer.getName() != null && customer.getName().contains("(")) {
+            botUsername = customer.getName().substring(customer.getName().indexOf("(") + 1, customer.getName().indexOf(")"));
+        }
+        if (botUsername != null && TelegramInitializerConfig.ACTIVE_BOTS.containsKey(botUsername)) {
+            return TelegramInitializerConfig.ACTIVE_BOTS.get(botUsername);
+        }
+        // Fallback: Retorna o primeiro que encontrar se houver alguma falha no nome
+        if (!TelegramInitializerConfig.ACTIVE_BOTS.isEmpty()) {
+            return TelegramInitializerConfig.ACTIVE_BOTS.values().iterator().next();
+        }
+        return null;
     }
 }

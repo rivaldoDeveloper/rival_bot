@@ -4,11 +4,9 @@ import com.rival.chatbot.domain.telegram.TelegramBotConfigEntity;
 import com.rival.chatbot.dto.ChatRequestDTO;
 import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.repository.CustomerDataRepository;
-import com.rival.chatbot.repository.telegram.TelegramBotConfigRepository;
 import com.rival.chatbot.service.ChatService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 import org.telegram.telegrambots.bots.DefaultBotOptions;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.GetFile;
@@ -31,36 +29,34 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
 
-@Component
+// ❌ ATENÇÃO: Retiramos o @Component pois vamos instanciar manualmente vários robôs
 public class TelegramBotService extends TelegramLongPollingBot {
 
     private static final Logger log = LoggerFactory.getLogger(TelegramBotService.class);
 
     private final ChatService chatService;
-    private final TelegramBotConfigRepository telegramBotConfigRepository;
     private final CustomerDataRepository customerDataRepository;
 
+    // ✅ NOVO: O Bot agora sabe as suas próprias credenciais dinamicamente
+    private final TelegramBotConfigEntity botConfig;
+
     public TelegramBotService(ChatService chatService,
-                              TelegramBotConfigRepository telegramBotConfigRepository,
-                              CustomerDataRepository customerDataRepository) {
-        super(configureUnsafeSSLAndGetOptions(), "");
+                              CustomerDataRepository customerDataRepository,
+                              TelegramBotConfigEntity botConfig) {
+        super(configureUnsafeSSLAndGetOptions(), botConfig.getBotToken());
         this.chatService = chatService;
-        this.telegramBotConfigRepository = telegramBotConfigRepository;
         this.customerDataRepository = customerDataRepository;
+        this.botConfig = botConfig;
     }
 
     @Override
     public String getBotToken() {
-        return telegramBotConfigRepository.findFirstByActiveTrue()
-                .map(TelegramBotConfigEntity::getBotToken)
-                .orElse("");
+        return botConfig.getBotToken();
     }
 
     @Override
     public String getBotUsername() {
-        return telegramBotConfigRepository.findFirstByActiveTrue()
-                .map(TelegramBotConfigEntity::getBotUsername)
-                .orElse("rival_atendimento_bot");
+        return botConfig.getBotUsername();
     }
 
     @Override
@@ -68,9 +64,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
         try {
             if (update.hasMessage()) {
                 Long chatId = update.getMessage().getChatId();
-                UUID tenantId = telegramBotConfigRepository.findFirstByActiveTrue()
-                        .map(TelegramBotConfigEntity::getTenantId)
-                        .orElseGet(() -> UUID.nameUUIDFromBytes("TELEGRAM_TENANT".getBytes()));
+                UUID tenantId = botConfig.getTenantId();
                 UUID sessionId = UUID.nameUUIDFromBytes(chatId.toString().getBytes());
 
                 String userText = "";
@@ -138,7 +132,6 @@ public class TelegramBotService extends TelegramLongPollingBot {
 
                         if (!fullName.isEmpty()) {
                             customerDataRepository.findBySessionId(sessionId).ifPresent(customer -> {
-                                // ✅ CORREÇÃO: Volta a incluir os parênteses com o nome do bot na base de dados para o Controller poder filtrar depois
                                 if (customer.getName() == null || !customer.getName().contains("(")) {
                                     customer.setName(fullName + " (" + botName + ")");
                                     customerDataRepository.save(customer);
