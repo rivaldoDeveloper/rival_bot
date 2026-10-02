@@ -20,6 +20,10 @@ public class FlowConfigEntity {
     @Column(nullable = false)
     private boolean active = true;
 
+    // NOVO CAMPO: Identifica se é WhatsApp, Telegram, etc.
+    @Column(length = 20)
+    private String channel;
+
     // Armazena o JSON gerado pelo React Flow / Node Editor
     @Column(columnDefinition = "TEXT", nullable = false)
     private String flowDataJson;
@@ -36,4 +40,6 @@ public class FlowConfigEntity {
     public void setActive(boolean active) { this.active = active; }
     public String getFlowDataJson() { return flowDataJson; }
     public void setFlowDataJson(String flowDataJson) { this.flowDataJson = flowDataJson; }
+    public String getChannel() { return channel; }
+    public void setChannel(String channel) { this.channel = channel; }
 }

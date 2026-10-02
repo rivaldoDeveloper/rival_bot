@@ -1,9 +1,10 @@
 package com.rival.chatbot.service;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rival.chatbot.domain.CustomerDataEntity;
 import com.rival.chatbot.domain.FlowConfigEntity;
-import com.rival.chatbot.dto.flow.FlowDefinition;
+import com.rival.chatbot.dto.flow.FlowDefinitionDTO;
 import com.rival.chatbot.repository.CustomerDataRepository;
 import com.rival.chatbot.repository.FlowConfigRepository;
 import org.slf4j.Logger;
@@ -15,7 +16,6 @@ import java.util.UUID;
 
 @Service
 public class FlowEngineService {
-
     private static final Logger log = LoggerFactory.getLogger(FlowEngineService.class);
     private final CustomerDataRepository customerDataRepository;
     private final FlowConfigRepository flowConfigRepository;
@@ -25,89 +25,96 @@ public class FlowEngineService {
                              FlowConfigRepository flowConfigRepository) {
         this.customerDataRepository = customerDataRepository;
         this.flowConfigRepository = flowConfigRepository;
-        this.objectMapper = new ObjectMapper();
+        // ✅ MAGIA AQUI: Diz ao Java para ignorar propriedades visuais (como o x e y) geradas pelo Angular!
+        this.objectMapper = new ObjectMapper()
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
-    /**
-     * Tenta processar a mensagem dentro do funil estruturado.
-     * Retorna a resposta do próximo nó, ou NULL se o fluxo quebrou ou finalizou.
-     */
-    public String processFlow(UUID sessionId, UUID tenantId, String userMessage) {
+    public String processFlow(UUID sessionId, UUID tenantId, String userMessage, String channel) {
         try {
-            // 1. Busca o fluxo ativo da empresa
-            Optional<FlowConfigEntity> activeFlowOpt = flowConfigRepository.findFirstByTenantIdAndActiveTrue(tenantId);
-            if (activeFlowOpt.isEmpty()) return null;
+            String currentChannel = (channel != null && !channel.isBlank()) ? channel : "WHATSAPP";
+            Optional<FlowConfigEntity> activeFlowOpt = flowConfigRepository.findFirstByTenantIdAndChannelAndActiveTrue(
+                    tenantId, currentChannel);
 
-            FlowDefinition flow = objectMapper.readValue(activeFlowOpt.get().getFlowDataJson(), FlowDefinition.class);
+            if (activeFlowOpt.isEmpty()) {
+                log.warn("Nenhum fluxo ativo encontrado no banco para o canal: {}", currentChannel);
+                return null;
+            }
 
-            // 2. Busca o estado atual do cliente ou CRIA NA HORA se não existir (evita falha com o @Async do Extractor)
-            CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId)
-                    .orElseGet(() -> {
-                        CustomerDataEntity newCustomer = new CustomerDataEntity();
-                        newCustomer.setSessionId(sessionId);
-                        newCustomer.setTenantId(tenantId);
-                        return customerDataRepository.save(newCustomer);
-                    });
+            FlowDefinitionDTO flow = objectMapper.readValue(activeFlowOpt.get().getFlowDataJson(), FlowDefinitionDTO.class);
+
+            CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId).orElseGet(() -> {
+                CustomerDataEntity newCustomer = new CustomerDataEntity();
+                newCustomer.setSessionId(sessionId);
+                newCustomer.setTenantId(tenantId);
+                newCustomer.setChannel(currentChannel);
+                return customerDataRepository.save(newCustomer);
+            });
 
             String currentNodeId = customer.getCurrentNodeId();
 
-            // Se for o primeiro contato, inicia no nó principal (ex: id "start")
             if (currentNodeId == null || currentNodeId.isBlank()) {
-                currentNodeId = "start";
-                customer.setCurrentNodeId(currentNodeId);
+                Optional<FlowDefinitionDTO.FlowNode> triggerNode = flow.nodes().stream()
+                        .filter(n -> "trigger".equalsIgnoreCase(n.type()))
+                        .findFirst();
+
+                if (triggerNode.isEmpty()) {
+                    log.warn("Nó 'trigger' inicial não encontrado no fluxo.");
+                    return null;
+                }
+
+                String triggerId = triggerNode.get().id();
+                String firstActionId = getNextConnectedNode(flow, triggerId);
+
+                if (firstActionId == null) return null;
+
+                customer.setCurrentNodeId(firstActionId);
                 customerDataRepository.save(customer);
-                return getNodeContent(flow, currentNodeId);
+                return buildResponseAndCheckEnd(flow, firstActionId, customer);
             }
 
-            // 3. Procura qual linha (Edge) bate com a resposta do cliente
-            String cleanMsg = userMessage.trim().toLowerCase();
-            String nextNodeId = null;
+            String nextNodeId = getNextConnectedNode(flow, currentNodeId);
 
-            for (FlowDefinition.FlowEdge edge : flow.edges()) {
-                if (edge.source().equals(currentNodeId)) {
-                    // Verifica se a condição (ex: "1") bate com o que o usuário digitou
-                    if (edge.condition() == null || edge.condition().equalsIgnoreCase(cleanMsg)) {
-                        nextNodeId = edge.target();
-                        break;
-                    }
-                }
-            }
-
-            // 4. Se o cliente respondeu errado, repete a pergunta atual
             if (nextNodeId == null) {
-                // Se a pessoa errar a opção, não devolvemos áudio, apenas um texto de erro e o conteúdo original do nó atual
-                String currentContent = getNodeContent(flow, currentNodeId);
-                if (currentContent.startsWith("AUDIO:")) {
-                    return "Opção inválida. Por favor, ouça o áudio novamente e digite uma opção válida.";
-                }
-                return "Opção inválida. " + currentContent;
+                customer.setCurrentNodeId(null);
+                customerDataRepository.save(customer);
+                return null;
             }
 
-            // 5. Move o cliente para o novo Nó e salva no banco
             customer.setCurrentNodeId(nextNodeId);
             customerDataRepository.save(customer);
-
-            return getNodeContent(flow, nextNodeId);
+            return buildResponseAndCheckEnd(flow, nextNodeId, customer);
 
         } catch (Exception e) {
-            log.error("Erro ao processar máquina de estados do fluxo", e);
+            log.error("Erro CRÍTICO na leitura do Fluxo: {}", e.getMessage(), e);
             return null;
         }
     }
 
-    /**
-     * Lê o conteúdo do Nó. Se for texto, devolve texto. Se for áudio, devolve o prefixo especial AUDIO:
-     */
-    private String getNodeContent(FlowDefinition flow, String nodeId) {
-        return flow.nodes().stream()
-                .filter(n -> n.id().equals(nodeId))
-                .findFirst()
-                .map(n -> {
-                    if ("audio".equalsIgnoreCase(n.type()) && n.data().audioUrl() != null) {
-                        return "AUDIO:" + n.data().audioUrl();
-                    }
-                    return n.data().text() != null ? n.data().text() : "Bloco sem conteúdo";
-                })
-                .orElse("Fim do atendimento.");
+    private String getNextConnectedNode(FlowDefinitionDTO flow, String currentId) {
+        for (FlowDefinitionDTO.FlowEdge edge : flow.edges()) {
+            if (edge.sourceId() != null && edge.sourceId().equals(currentId)) {
+                return edge.targetId();
+            }
+        }
+        return null;
+    }
+
+    private String buildResponseAndCheckEnd(FlowDefinitionDTO flow, String nodeId, CustomerDataEntity customer) {
+        Optional<FlowDefinitionDTO.FlowNode> nodeOpt = flow.nodes().stream().filter(n -> n.id().equals(nodeId)).findFirst();
+        if (nodeOpt.isEmpty()) return null;
+
+        FlowDefinitionDTO.FlowNode node = nodeOpt.get();
+
+        boolean hasOutgoingEdges = flow.edges().stream().anyMatch(e -> e.sourceId() != null && e.sourceId().equals(nodeId));
+        if (!hasOutgoingEdges) {
+            customer.setCurrentNodeId(null);
+            customerDataRepository.save(customer);
+        }
+
+        if ("audio".equalsIgnoreCase(node.type()) && node.data() != null && node.data().audioUrl() != null) {
+            return "AUDIO:" + node.data().audioUrl();
+        }
+        return (node.data() != null && node.data().text() != null) ? node.data().text() : "Aguarde...";
     }
 }

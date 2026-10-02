@@ -1,8 +1,11 @@
 package com.rival.chatbot.dto.flow;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+
 import java.util.List;
 
-public record FlowDefinition(
+@JsonIgnoreProperties(ignoreUnknown = true)
+public record FlowDefinitionDTO(
         List<FlowNode> nodes,
         List<FlowEdge> edges
 ) {
@@ -18,8 +21,9 @@ public record FlowDefinition(
     ) {}
 
     public record FlowEdge(
-            String source,
-            String target,
+            String id,           // ✅ Adicionado para bater certo com o Angular
+            String sourceId,     // ✅ Corrigido (antes era 'source')
+            String targetId,     // ✅ Corrigido (antes era 'target')
             String condition
     ) {}
 }

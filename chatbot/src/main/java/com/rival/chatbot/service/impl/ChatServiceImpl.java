@@ -37,13 +37,9 @@ public class ChatServiceImpl implements ChatService {
     private final AudioTranscriptionService audioTranscriptionService;
     private final OwnGenerativeAiService ownGenerativeAiService;
     private final FlowEngineService flowEngineService;
-
-    // Dependências para Disparo Bidirecional
     private final CustomerDataRepository customerDataRepository;
     private final WhatsAppSenderService whatsAppSenderService;
     private final WhatsAppAccountRepository whatsAppAccountRepository;
-
-    // ❌ REMOVIDA: A injeção do @Lazy TelegramBotService, já não precisamos disso!
 
     public ChatServiceImpl(ChatMessageRepository repository,
                            ChatMapper chatMapper,
@@ -104,7 +100,6 @@ public class ChatServiceImpl implements ChatService {
                         .findFirst()
                         .ifPresent(acc -> whatsAppSenderService.sendMessage(acc.getInstanceName(), acc.getEvolutionApiKey(), externalId, request.message()));
             } else if ("TELEGRAM".equals(customer.getChannel())) {
-                // ✅ ROTEAMENTO DINÂMICO MULTI-BOT
                 TelegramBotService botToUse = findTelegramBotByCustomer(customer);
                 if (botToUse != null) {
                     botToUse.sendMessageToClient(externalId, request.message());
@@ -140,7 +135,6 @@ public class ChatServiceImpl implements ChatService {
                                 .ifPresent(acc -> whatsAppSenderService.sendMediaMessage(
                                         acc.getInstanceName(), acc.getEvolutionApiKey(), externalId, message, savedFile));
                     } else if ("TELEGRAM".equals(customer.getChannel())) {
-                        // ✅ ROTEAMENTO DINÂMICO MULTI-BOT
                         TelegramBotService botToUse = findTelegramBotByCustomer(customer);
                         if (botToUse != null) {
                             botToUse.sendMediaToClient(externalId, message, savedFile);
@@ -203,7 +197,6 @@ public class ChatServiceImpl implements ChatService {
 
     private ChatResponseDTO handleVisualFlowChat(UUID sessionId, UUID tenantId, String userTextContent, String channel, String externalId) {
         saveUserMessage(sessionId, tenantId, userTextContent);
-        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
         CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId).orElse(null);
         if (customer != null && customer.getIsAiActive() != null && !customer.getIsAiActive()) {
@@ -212,15 +205,30 @@ public class ChatServiceImpl implements ChatService {
 
         if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
 
-        String flowResponse = flowEngineService.processFlow(sessionId, tenantId, userTextContent);
-        String finalResponse = (flowResponse != null) ? flowResponse : ownGenerativeAiService.generateOwnResponse(userTextContent, localVectorNlpService.processAndMatch(sessionId, userTextContent));
+        // Processa o fluxo visual primeiro
+        String flowResponse = flowEngineService.processFlow(sessionId, tenantId, userTextContent, channel);
+        String finalResponse;
+
+        if (flowResponse != null && !flowResponse.isBlank()) {
+            // Sucesso no Fluxo
+            finalResponse = flowResponse;
+        } else {
+            // O Fluxo falhou ou chegou ao fim.
+            if ("TELEGRAM".equalsIgnoreCase(channel)) {
+                log.info("⚠️ TELEGRAM FLOW ENGINE DEVOLVEU NULL. Bloqueio de IA ativado para depuração. Verifique o mapeamento JSON.");
+                return new ChatResponseDTO("", null, null, "BOT", false, LocalDateTime.now());
+            }
+
+            // Fallback para outros canais
+            String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
+            finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
+        }
+
         saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
+        dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
+
         return checkAudioCommandAndReturn(finalResponse);
     }
-
-    // ==========================================
-    // MÉTODOS AUXILIARES
-    // ==========================================
 
     private void saveUserMessage(UUID sessionId, UUID tenantId, String userTextContent) {
         ChatMessageEntity userEntity = new ChatMessageEntity();
@@ -313,7 +321,6 @@ public class ChatServiceImpl implements ChatService {
         });
     }
 
-    // ✅ NOVO MÉTODO: Função auxiliar para descobrir o bot certo a utilizar
     private TelegramBotService findTelegramBotByCustomer(CustomerDataEntity customer) {
         String botUsername = null;
         if (customer.getName() != null && customer.getName().contains("(")) {
@@ -322,7 +329,6 @@ public class ChatServiceImpl implements ChatService {
         if (botUsername != null && TelegramInitializerConfig.ACTIVE_BOTS.containsKey(botUsername)) {
             return TelegramInitializerConfig.ACTIVE_BOTS.get(botUsername);
         }
-        // Fallback: Retorna o primeiro que encontrar se houver alguma falha no nome
         if (!TelegramInitializerConfig.ACTIVE_BOTS.isEmpty()) {
             return TelegramInitializerConfig.ACTIVE_BOTS.values().iterator().next();
         }

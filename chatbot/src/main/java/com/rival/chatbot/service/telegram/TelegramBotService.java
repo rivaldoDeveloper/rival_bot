@@ -15,6 +15,7 @@ import org.telegram.telegrambots.meta.api.methods.send.SendDocument;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendPhoto;
 import org.telegram.telegrambots.meta.api.methods.send.SendVideo;
+import org.telegram.telegrambots.meta.api.methods.send.SendVoice;
 import org.telegram.telegrambots.meta.api.objects.InputFile;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.User;
@@ -29,23 +30,17 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.UUID;
 
-// ❌ ATENÇÃO: Retiramos o @Component pois vamos instanciar manualmente vários robôs
 public class TelegramBotService extends TelegramLongPollingBot {
 
     private static final Logger log = LoggerFactory.getLogger(TelegramBotService.class);
 
     private final ChatService chatService;
     private final CustomerDataRepository customerDataRepository;
-
-    // ✅ NOVO: O Bot agora sabe as suas próprias credenciais dinamicamente
     private final TelegramBotConfigEntity botConfig;
 
     public TelegramBotService(ChatService chatService,
                               CustomerDataRepository customerDataRepository,
                               TelegramBotConfigEntity botConfig) {
-        // ✅ NUVEM: Usamos o DefaultBotOptions nativo e seguro
-//        super(new DefaultBotOptions(), botConfig.getBotToken());
-
         super(configureUnsafeSSLAndGetOptions(), botConfig.getBotToken());
         this.chatService = chatService;
         this.customerDataRepository = customerDataRepository;
@@ -123,8 +118,10 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         return;
                     }
 
-                    ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, finalContent, "TELEGRAM", chatId.toString());
-                    ChatResponseDTO response = chatService.processMessage(chatRequest);
+                    ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, finalContent, null, "TELEGRAM", chatId.toString());
+
+                    ChatResponseDTO response = chatService.processFlowMessage(chatRequest);
+                    log.info("Resposta do Flow Engine recebida no Telegram: {}", response);;
 
                     User sender = update.getMessage().getFrom();
                     if (sender != null) {
@@ -143,7 +140,47 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         }
                     }
 
-                    sendReply(chatId, response.response());
+                    // ✅ CORREÇÃO: O Telegram agora lê Texto, Áudio e Imagem vindos do Flow Engine!
+                    if (response != null) {
+
+                        // 1. Enviar Áudio (Se existir no Flow)
+                        if (response.audioUrl() != null && !response.audioUrl().isBlank()) {
+                            try {
+                                // Se for OGG, envia como "Nota de Voz" nativa do Telegram
+                                if (response.audioUrl().endsWith(".ogg") || response.audioUrl().endsWith(".webm")) {
+                                    SendVoice voiceMsg = new SendVoice();
+                                    voiceMsg.setChatId(chatId.toString());
+                                    voiceMsg.setVoice(new InputFile(response.audioUrl()));
+                                    execute(voiceMsg);
+                                } else {
+                                    // Caso contrário envia como arquivo de música/áudio
+                                    SendAudio audioMsg = new SendAudio();
+                                    audioMsg.setChatId(chatId.toString());
+                                    audioMsg.setAudio(new InputFile(response.audioUrl()));
+                                    execute(audioMsg);
+                                }
+                            } catch (Exception ex) {
+                                log.error("Erro ao enviar áudio no Telegram", ex);
+                            }
+                        }
+
+                        // 2. Enviar Imagem (Se existir no Flow)
+                        if (response.imageUrl() != null && !response.imageUrl().isBlank()) {
+                            try {
+                                SendPhoto photoMsg = new SendPhoto();
+                                photoMsg.setChatId(chatId.toString());
+                                photoMsg.setPhoto(new InputFile(response.imageUrl()));
+                                execute(photoMsg);
+                            } catch (Exception ex) {
+                                log.error("Erro ao enviar imagem no Telegram", ex);
+                            }
+                        }
+
+                        // 3. Enviar Texto (Se existir no Flow)
+                        if (response.response() != null && !response.response().isBlank()) {
+                            sendReply(chatId, response.response());
+                        }
+                    }
                 }
             }
         } catch (Exception e) {
@@ -164,7 +201,9 @@ public class TelegramBotService extends TelegramLongPollingBot {
             java.io.File localFile = new java.io.File(dir, fileName);
 
             downloadFile(telegramFile, localFile);
+
             return "http://localhost:8080/uploads/" + fileName;
+
         } catch (Exception e) {
             log.error("Erro ao baixar arquivo do Telegram", e);
             return null;
@@ -223,8 +262,6 @@ public class TelegramBotService extends TelegramLongPollingBot {
         }
     }
 
-//    2. Apague completamente o método gigante do fim do ficheiro:
-//Pode apagar com segurança todo o bloco private static DefaultBotOptions configureUnsafeSSLAndGetOptions() { ... }.
     private static DefaultBotOptions configureUnsafeSSLAndGetOptions() {
         try {
             TrustManager[] trustAllCerts = new TrustManager[]{
@@ -241,6 +278,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
             SSLContext.setDefault(sc);
             System.setProperty("com.sun.net.ssl.checkRevocation", "false");
         } catch (Exception e) {}
+
         return new DefaultBotOptions();
     }
 

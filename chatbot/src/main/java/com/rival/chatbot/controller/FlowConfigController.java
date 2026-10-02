@@ -24,21 +24,20 @@ public class FlowConfigController {
      */
     @PostMapping("/save")
     public ResponseEntity<FlowConfigEntity> saveFlow(@RequestBody FlowConfigEntity flowConfig) {
-        // Verifica se a empresa (tenant) já tem um fluxo ativo para atualizar, senão cria um novo
-        Optional<FlowConfigEntity> existingFlow = flowConfigRepository.findFirstByTenantIdAndActiveTrue(flowConfig.getTenantId());
+        // Agora procura se já existe um fluxo PARA ESTE CANAL específico
+        Optional<FlowConfigEntity> existingFlow = flowConfigRepository.findFirstByTenantIdAndChannel(flowConfig.getTenantId(), flowConfig.getChannel());
 
         if (existingFlow.isPresent()) {
             FlowConfigEntity entityToUpdate = existingFlow.get();
             entityToUpdate.setFlowDataJson(flowConfig.getFlowDataJson());
             entityToUpdate.setName(flowConfig.getName());
+            entityToUpdate.setActive(flowConfig.isActive());
             return ResponseEntity.ok(flowConfigRepository.save(entityToUpdate));
         }
 
-        // Se o tenantId não vier preenchido (cenário de teste), gera um UUID
         if (flowConfig.getTenantId() == null) {
             flowConfig.setTenantId(UUID.randomUUID());
         }
-
         return ResponseEntity.ok(flowConfigRepository.save(flowConfig));
     }
 
@@ -46,9 +45,9 @@ public class FlowConfigController {
      * Endpoint para o Frontend carregar o fluxo quando a tela do painel abrir.
      * Devolve o JSON exato para o React Flow montar os bloquinhos visuais.
      */
-    @GetMapping("/{tenantId}")
-    public ResponseEntity<FlowConfigEntity> getActiveFlow(@PathVariable UUID tenantId) {
-        return flowConfigRepository.findFirstByTenantIdAndActiveTrue(tenantId)
+    @GetMapping("/{tenantId}/{channel}")
+    public ResponseEntity<FlowConfigEntity> getActiveFlow(@PathVariable UUID tenantId, @PathVariable String channel) {
+        return flowConfigRepository.findFirstByTenantIdAndChannel(tenantId, channel)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

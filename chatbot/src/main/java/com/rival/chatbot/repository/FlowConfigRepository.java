@@ -14,6 +14,8 @@ public interface FlowConfigRepository extends JpaRepository<FlowConfigEntity, UU
      * Procura o fluxo visual que está atualmente ativo para um determinado Tenant.
      * Retorna um Optional vazio caso a empresa não tenha configurado um fluxo.
      */
-    Optional<FlowConfigEntity> findFirstByTenantIdAndActiveTrue(UUID tenantId);
+    Optional<FlowConfigEntity> findFirstByTenantIdAndChannelAndActiveTrue(UUID tenantId, String channel);
 
+    // Usado pelo Painel Angular (Carrega o fluxo específico do canal)
+    Optional<FlowConfigEntity> findFirstByTenantIdAndChannel(UUID tenantId, String channel);
 }
