@@ -7,21 +7,60 @@ import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
+import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @CrossOrigin(origins = "http://localhost:4200")
 public class FileController {
 
     private static final Logger log = LoggerFactory.getLogger(FileController.class);
+    private final String UPLOAD_DIR = "uploads/";
 
+    // ✅ NOVO: Endpoint para receber o arquivo do Angular (Flow Engine) e salvar no disco
+    @PostMapping("/api/v1/files/upload")
+    public ResponseEntity<?> uploadFile(@RequestParam("file") MultipartFile file) {
+        try {
+            File directory = new File(UPLOAD_DIR);
+            if (!directory.exists()) {
+                directory.mkdirs();
+            }
+
+            String originalFilename = file.getOriginalFilename();
+            String extension = originalFilename != null && originalFilename.contains(".")
+                    ? originalFilename.substring(originalFilename.lastIndexOf("."))
+                    : "";
+            String newFileName = UUID.randomUUID().toString() + extension;
+
+            Path filePath = Paths.get(UPLOAD_DIR + newFileName);
+            Files.write(filePath, file.getBytes());
+
+            String fileDownloadUri = ServletUriComponentsBuilder.fromCurrentContextPath()
+                    .path("/uploads/")
+                    .path(newFileName)
+                    .toUriString();
+
+            log.info("Mídia do Flow Engine guardada com sucesso: {}", fileDownloadUri);
+
+            return ResponseEntity.ok(Map.of("url", fileDownloadUri));
+
+        } catch (IOException e) {
+            log.error("Erro ao guardar o ficheiro", e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Falha ao processar o upload: " + e.getMessage()));
+        }
+    }
+
+    // O SEU MÉTODO EXISTENTE (Lê e serve o arquivo para o Angular/WhatsApp)
     @GetMapping("/uploads/{filename:.+}")
     public ResponseEntity<Resource> serveFile(@PathVariable String filename) {
         try {

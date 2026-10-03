@@ -17,13 +17,15 @@ public record FlowDefinitionDTO(
 
     public record NodeData(
             String text,
-            String audioUrl
+            String audioUrl,
+            String videoUrl,     // ✅ Adicionado para suportar o nó de vídeo
+            Boolean active       // ✅ Adicionado para controlar o bypass do nó (Boolean wrapper para permitir null)
     ) {}
 
     public record FlowEdge(
-            String id,           // ✅ Adicionado para bater certo com o Angular
-            String sourceId,     // ✅ Corrigido (antes era 'source')
-            String targetId,     // ✅ Corrigido (antes era 'target')
+            String id,
+            String sourceId,
+            String targetId,
             String condition
     ) {}
 }

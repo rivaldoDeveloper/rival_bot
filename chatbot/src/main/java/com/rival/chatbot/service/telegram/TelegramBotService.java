@@ -118,10 +118,11 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         return;
                     }
 
+                    // Encaminha a mensagem (texto ou mídia) para o ChatService/Flow/NLP
                     ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, tenantId, finalContent, null, "TELEGRAM", chatId.toString());
 
                     ChatResponseDTO response = chatService.processFlowMessage(chatRequest);
-                    log.info("Resposta do Flow Engine recebida no Telegram: {}", response);;
+                    log.info("Resposta do Flow Engine/NLP recebida no Telegram: {}", response);
 
                     User sender = update.getMessage().getFrom();
                     if (sender != null) {
@@ -140,23 +141,21 @@ public class TelegramBotService extends TelegramLongPollingBot {
                         }
                     }
 
-                    // ✅ CORREÇÃO: O Telegram agora lê Texto, Áudio e Imagem vindos do Flow Engine!
                     if (response != null) {
-
-                        // 1. Enviar Áudio (Se existir no Flow)
+                        // 1. Enviar Áudio com suporte a ficheiro local
                         if (response.audioUrl() != null && !response.audioUrl().isBlank()) {
                             try {
-                                // Se for OGG, envia como "Nota de Voz" nativa do Telegram
+                                InputFile inputFile = getTelegramInputFile(response.audioUrl());
+
                                 if (response.audioUrl().endsWith(".ogg") || response.audioUrl().endsWith(".webm")) {
                                     SendVoice voiceMsg = new SendVoice();
                                     voiceMsg.setChatId(chatId.toString());
-                                    voiceMsg.setVoice(new InputFile(response.audioUrl()));
+                                    voiceMsg.setVoice(inputFile);
                                     execute(voiceMsg);
                                 } else {
-                                    // Caso contrário envia como arquivo de música/áudio
                                     SendAudio audioMsg = new SendAudio();
                                     audioMsg.setChatId(chatId.toString());
-                                    audioMsg.setAudio(new InputFile(response.audioUrl()));
+                                    audioMsg.setAudio(inputFile);
                                     execute(audioMsg);
                                 }
                             } catch (Exception ex) {
@@ -164,19 +163,28 @@ public class TelegramBotService extends TelegramLongPollingBot {
                             }
                         }
 
-                        // 2. Enviar Imagem (Se existir no Flow)
+                        // 2. Enviar Imagem ou Vídeo com suporte a ficheiro local
                         if (response.imageUrl() != null && !response.imageUrl().isBlank()) {
                             try {
-                                SendPhoto photoMsg = new SendPhoto();
-                                photoMsg.setChatId(chatId.toString());
-                                photoMsg.setPhoto(new InputFile(response.imageUrl()));
-                                execute(photoMsg);
+                                InputFile inputFile = getTelegramInputFile(response.imageUrl());
+
+                                if (response.imageUrl().endsWith(".mp4") || response.imageUrl().endsWith(".mov")) {
+                                    SendVideo videoMsg = new SendVideo();
+                                    videoMsg.setChatId(chatId.toString());
+                                    videoMsg.setVideo(inputFile);
+                                    execute(videoMsg);
+                                } else {
+                                    SendPhoto photoMsg = new SendPhoto();
+                                    photoMsg.setChatId(chatId.toString());
+                                    photoMsg.setPhoto(inputFile);
+                                    execute(photoMsg);
+                                }
                             } catch (Exception ex) {
-                                log.error("Erro ao enviar imagem no Telegram", ex);
+                                log.error("Erro ao enviar mídia/imagem no Telegram", ex);
                             }
                         }
 
-                        // 3. Enviar Texto (Se existir no Flow)
+                        // 3. Enviar Texto (Se existir)
                         if (response.response() != null && !response.response().isBlank()) {
                             sendReply(chatId, response.response());
                         }
@@ -186,6 +194,23 @@ public class TelegramBotService extends TelegramLongPollingBot {
         } catch (Exception e) {
             log.error("Erro no TelegramBotService", e);
         }
+    }
+
+    /**
+     * ✅ FUNÇÃO CENTRALIZADA: Transforma a URL num InputFile compatível com a API do Telegram.
+     * Se for localhost, extrai e envia o ficheiro a partir do disco.
+     */
+    private InputFile getTelegramInputFile(String urlStr) {
+        if (urlStr.contains("localhost") || urlStr.contains("127.0.0.1")) {
+            String fileName = urlStr.substring(urlStr.lastIndexOf("/") + 1);
+            File localFile = new File("uploads/" + fileName);
+            if (localFile.exists()) {
+                return new InputFile(localFile);
+            } else {
+                log.warn("Tentativa de enviar ficheiro local, mas ele não foi encontrado no disco: {}", localFile.getAbsolutePath());
+            }
+        }
+        return new InputFile(urlStr);
     }
 
     private String downloadTelegramMedia(String fileId, String extension) {

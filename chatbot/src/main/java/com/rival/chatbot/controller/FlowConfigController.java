@@ -5,6 +5,7 @@ import com.rival.chatbot.repository.FlowConfigRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -24,14 +25,22 @@ public class FlowConfigController {
      */
     @PostMapping("/save")
     public ResponseEntity<FlowConfigEntity> saveFlow(@RequestBody FlowConfigEntity flowConfig) {
-        // Agora procura se já existe um fluxo PARA ESTE CANAL específico
-        Optional<FlowConfigEntity> existingFlow = flowConfigRepository.findFirstByTenantIdAndChannel(flowConfig.getTenantId(), flowConfig.getChannel());
+        // Requer criar o método List<FlowConfigEntity> findAllByTenantIdAndChannel(...) no Repository
+        List<FlowConfigEntity> existingFlows = flowConfigRepository.findAllByTenantIdAndChannel(flowConfig.getTenantId(), flowConfig.getChannel());
 
-        if (existingFlow.isPresent()) {
-            FlowConfigEntity entityToUpdate = existingFlow.get();
+        if (!existingFlows.isEmpty()) {
+            // Atualiza a primeira linha encontrada
+            FlowConfigEntity entityToUpdate = existingFlows.get(0);
             entityToUpdate.setFlowDataJson(flowConfig.getFlowDataJson());
             entityToUpdate.setName(flowConfig.getName());
             entityToUpdate.setActive(flowConfig.isActive());
+
+            // Deleta as duplicatas fantasmas para evitar o loop
+            if (existingFlows.size() > 1) {
+                for (int i = 1; i < existingFlows.size(); i++) {
+                    flowConfigRepository.delete(existingFlows.get(i));
+                }
+            }
             return ResponseEntity.ok(flowConfigRepository.save(entityToUpdate));
         }
 

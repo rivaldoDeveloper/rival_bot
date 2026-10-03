@@ -25,7 +25,7 @@ public class FlowEngineService {
                              FlowConfigRepository flowConfigRepository) {
         this.customerDataRepository = customerDataRepository;
         this.flowConfigRepository = flowConfigRepository;
-        // ✅ MAGIA AQUI: Diz ao Java para ignorar propriedades visuais (como o x e y) geradas pelo Angular!
+        // ✅ Mantém a sua magia de ignorar propriedades visuais (x, y, styles)
         this.objectMapper = new ObjectMapper()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
@@ -63,8 +63,8 @@ public class FlowEngineService {
                     return null;
                 }
 
-                String triggerId = triggerNode.get().id();
-                String firstActionId = getNextConnectedNode(flow, triggerId);
+                // 🚀 Aqui chamamos a versão que pula nós desativados
+                String firstActionId = getNextActiveConnectedNode(flow, triggerNode.get().id());
 
                 if (firstActionId == null) return null;
 
@@ -73,7 +73,8 @@ public class FlowEngineService {
                 return buildResponseAndCheckEnd(flow, firstActionId, customer);
             }
 
-            String nextNodeId = getNextConnectedNode(flow, currentNodeId);
+            // 🚀 E aqui também: Busca o próximo nó ATIVO
+            String nextNodeId = getNextActiveConnectedNode(flow, currentNodeId);
 
             if (nextNodeId == null) {
                 customer.setCurrentNodeId(null);
@@ -91,13 +92,39 @@ public class FlowEngineService {
         }
     }
 
-    private String getNextConnectedNode(FlowDefinitionDTO flow, String currentId) {
+    // ✅ NOVO MÉTODO: Função recursiva para pular nós desativados!
+    private String getNextActiveConnectedNode(FlowDefinitionDTO flow, String currentId) {
+        String targetId = null;
+
+        // 1. Acha o próximo nó imediato conectado à aresta (edge)
         for (FlowDefinitionDTO.FlowEdge edge : flow.edges()) {
             if (edge.sourceId() != null && edge.sourceId().equals(currentId)) {
-                return edge.targetId();
+                targetId = edge.targetId();
+                break;
             }
         }
-        return null;
+
+        if (targetId == null) return null; // Fim da linha
+
+        String finalTargetId = targetId;
+        Optional<FlowDefinitionDTO.FlowNode> targetNodeOpt = flow.nodes().stream()
+                .filter(n -> n.id().equals(finalTargetId))
+                .findFirst();
+
+        if (targetNodeOpt.isPresent()) {
+            FlowDefinitionDTO.FlowNode targetNode = targetNodeOpt.get();
+
+            // Verifica se o painel Angular enviou 'active: false'. (Assumindo que null = true)
+            boolean isActive = targetNode.data() == null || targetNode.data().active() == null || targetNode.data().active();
+
+            if (!isActive) {
+                log.info("Nó {} está desativado pelo atendente. Pulando silenciosamente...", targetId);
+                // 🔄 Magia Recursiva: Como ele está desativado, procura o filho DELE
+                return getNextActiveConnectedNode(flow, targetId);
+            }
+        }
+
+        return targetId;
     }
 
     private String buildResponseAndCheckEnd(FlowDefinitionDTO flow, String nodeId, CustomerDataEntity customer) {
@@ -112,9 +139,16 @@ public class FlowEngineService {
             customerDataRepository.save(customer);
         }
 
+        // ✅ Lógica de Áudio que você já tinha
         if ("audio".equalsIgnoreCase(node.type()) && node.data() != null && node.data().audioUrl() != null) {
             return "AUDIO:" + node.data().audioUrl();
         }
+
+        // ✅ NOVA Lógica de Vídeo
+        if ("video".equalsIgnoreCase(node.type()) && node.data() != null && node.data().videoUrl() != null) {
+            return "VIDEO:" + node.data().videoUrl();
+        }
+
         return (node.data() != null && node.data().text() != null) ? node.data().text() : "Aguarde...";
     }
 }
