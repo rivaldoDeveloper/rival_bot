@@ -40,7 +40,6 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
-    // NOVO: Apanha erros de estado/timeout (Ex: "Docker demorou muito a gerar o QR")
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalStateException(IllegalStateException ex) {
         Map<String, Object> response = new HashMap<>();
@@ -48,6 +47,12 @@ public class GlobalExceptionHandler {
         response.put("status", HttpStatus.CONFLICT.value());
         response.put("error", ex.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
+    }
+
+    // SILENCIADOR DE STREAMING DE MÍDIA: Previne o spam gigante no log quando o frontend carrega Áudio/Vídeo
+    @ExceptionHandler(org.springframework.web.context.request.async.AsyncRequestNotUsableException.class)
+    public ResponseEntity<Void> handleClientAbortException() {
+        return ResponseEntity.noContent().build();
     }
 
     @ExceptionHandler(Exception.class)

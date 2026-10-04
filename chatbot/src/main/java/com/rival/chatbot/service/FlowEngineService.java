@@ -59,18 +59,20 @@ public class FlowEngineService {
             // REINÍCIO INTELIGENTE: Se estava na IA mas disse "oi/menu", volta para o fluxo visual.
             if ("NLP_MODE".equals(currentNodeId)) {
                 if (isResetKeyword(userMessage)) {
-                    log.info("Palavra-chave de reinício detetada ({}). A repor o Flow Engine para a sessão {}", userMessage, sessionId);
+                    log.info("Reset Inteligente acionado. A repor o Flow Engine para a sessão {}", sessionId);
                     customer.setCurrentNodeId(null);
                     currentNodeId = null;
                 } else {
-                    return null; // Continua a falar com a IA Generativa/NLP
+                    return null;
                 }
             }
 
             Queue<String> queue = new LinkedList<>();
 
             if (currentNodeId == null || currentNodeId.isBlank()) {
-                Optional<FlowDefinitionDTO.FlowNode> trigger = flow.nodes().stream().filter(n -> "trigger".equalsIgnoreCase(n.type())).findFirst();
+                Optional<FlowDefinitionDTO.FlowNode> trigger = flow.nodes().stream()
+                        .filter(n -> n.type() != null && n.type().toLowerCase().contains("trigger"))
+                        .findFirst();
                 if (trigger.isEmpty()) return null;
                 queue.addAll(getNextActiveConnectedNodes(flow, trigger.get().id()));
             } else {
@@ -83,65 +85,79 @@ public class FlowEngineService {
                 return null;
             }
 
-            StringBuilder combinedText = new StringBuilder();
-            String outAudio = null;
-            String outVideo = null;
+            List<String> sequence = new ArrayList<>();
+            String questionText = null;
             boolean requiresHandoff = false;
             boolean pausedAtQuestion = false;
             Set<String> visited = new HashSet<>();
 
-            // Agrega os nós sequenciais num único envio (Cascata Contínua)
-            while (!queue.isEmpty() && visited.size() < 20) {
+            while (!queue.isEmpty() && visited.size() < 30) {
                 String currId = queue.poll();
                 if (!visited.add(currId)) continue;
 
                 FlowDefinitionDTO.FlowNode node = getNodeById(flow, currId);
                 if (node == null) continue;
 
-                String type = node.type();
+                String type = node.type() != null ? node.type().toLowerCase() : "";
                 FlowDefinitionDTO.NodeData data = node.data();
 
-                if ("text".equalsIgnoreCase(type) && data != null && data.text() != null) {
-                    if (!combinedText.isEmpty()) combinedText.append("\n\n");
-                    combinedText.append(data.text());
-                } else if ("audio".equalsIgnoreCase(type) && data != null && data.audioUrl() != null) {
-                    outAudio = data.audioUrl();
-                } else if ("video".equalsIgnoreCase(type) && data != null && data.videoUrl() != null) {
-                    outVideo = data.videoUrl();
-                } else if ("question".equalsIgnoreCase(type) && data != null && data.text() != null) {
-                    if (!combinedText.isEmpty()) combinedText.append("\n\n");
-                    combinedText.append(data.text());
-
-                    customer.setCurrentNodeId(currId);
-                    customerDataRepository.save(customer);
-                    pausedAtQuestion = true;
-                    break;
-                } else if ("handoff".equalsIgnoreCase(type)) {
+                if (type.contains("text") || type.contains("message")) {
+                    if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
+                        sequence.add("TEXT:" + data.text().trim());
+                    }
+                } else if (type.contains("audio")) {
+                    if (data != null && data.audioUrl() != null && !data.audioUrl().trim().isEmpty()) {
+                        sequence.add("AUDIO:" + data.audioUrl().trim());
+                    }
+                } else if (type.contains("video")) {
+                    if (data != null && data.videoUrl() != null && !data.videoUrl().trim().isEmpty()) {
+                        sequence.add("VIDEO:" + data.videoUrl().trim());
+                    }
+                } else if (type.contains("question")) {
+                    if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
+                        questionText = data.text().trim();
+                        customer.setCurrentNodeId(currId);
+                        pausedAtQuestion = true;
+                        continue;
+                    }
+                } else if (type.contains("handoff")) {
                     requiresHandoff = true;
                     customer.setCurrentNodeId("NLP_MODE");
-                    customerDataRepository.save(customer);
-                    break;
+                    continue;
+                } else if (type.contains("extract")) {
+                    // Bloco de Extração CRM
+                    // Apenas regista a passagem e continua o fluxo, pois o DataExtractorService atua nos bastidores.
+                    List<String> nextIds = getNextActiveConnectedNodes(flow, currId);
+                    if (nextIds.isEmpty() && sequence.isEmpty() && !requiresHandoff) {
+                        // Se for o último bloco e não houver mais nada a seguir, previne que a IA seja invocada
+                        sequence.add("TEXT:Dados processados e registados no sistema.");
+                    }
+                    queue.addAll(nextIds);
+                    continue;
                 }
 
                 List<String> nextIds = getNextActiveConnectedNodes(flow, currId);
-                if (nextIds.isEmpty()) {
-                    if (!pausedAtQuestion) customer.setCurrentNodeId("NLP_MODE");
-                } else {
-                    queue.addAll(nextIds);
-                }
+                queue.addAll(nextIds);
+            }
+
+            if (questionText != null) {
+                sequence.add("TEXT:" + questionText);
             }
 
             if (!pausedAtQuestion && !requiresHandoff) {
                 customer.setCurrentNodeId("NLP_MODE");
-                customerDataRepository.save(customer);
             }
 
-            if (combinedText.isEmpty() && outAudio == null && outVideo == null && !requiresHandoff) return null;
+            customerDataRepository.save(customer);
+
+            if (sequence.isEmpty() && !requiresHandoff) return null;
+
+            String fullSequence = String.join("|||", sequence);
 
             return new ChatResponseDTO(
-                    combinedText.toString().trim(),
-                    outVideo,
-                    outAudio,
+                    fullSequence,
+                    null,
+                    null,
                     "BOT",
                     requiresHandoff,
                     LocalDateTime.now()

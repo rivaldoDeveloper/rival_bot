@@ -98,27 +98,41 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 });
             }
 
-            // ✅ CORREÇÃO CRÍTICA DO WHATSAPP: Envia Áudios e Imagens lendo o ficheiro gerado!
+            //CORREÇÃO CRÍTICA DO WHATSAPP: Envia Áudios e Imagens lendo o ficheiro gerado!
             if (response != null) {
-                // 1. Enviar Áudio
-                if (response.audioUrl() != null && !response.audioUrl().isBlank()) {
-                    File audioFile = getLocalFileFromUrl(response.audioUrl());
-                    if (audioFile != null && audioFile.exists()) {
-                        whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", audioFile);
-                    }
-                }
+                String respText = response.response();
 
-                // 2. Enviar Imagem/Vídeo
-                if (response.imageUrl() != null && !response.imageUrl().isBlank()) {
-                    File mediaFile = getLocalFileFromUrl(response.imageUrl());
-                    if (mediaFile != null && mediaFile.exists()) {
-                        whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", mediaFile);
+                // CORREÇÃO: Reconhece os marcadores mesmo que venha apenas 1 bloco (sem o |||)
+                if (respText != null && (respText.contains("|||") || respText.startsWith("TEXT:") || respText.startsWith("AUDIO:") || respText.startsWith("VIDEO:"))) {
+                    String[] parts = respText.split("\\|\\|\\|");
+                    for (String part : parts) {
+                        if (part.startsWith("AUDIO:") || part.startsWith("VIDEO:")) {
+                            String url = part.substring(6);
+                            File mediaFile = getLocalFileFromUrl(url);
+                            if (mediaFile != null && mediaFile.exists()) {
+                                whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", mediaFile);
+                            }
+                        } else if (part.startsWith("TEXT:")) {
+                            whatsAppSenderService.sendMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, part.substring(5));
+                        }
                     }
-                }
-
-                // 3. Enviar Texto (só envia se houver texto)
-                if (response.response() != null && !response.response().isBlank()) {
-                    whatsAppSenderService.sendMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, response.response());
+                } else {
+                    // IA / MENSAGENS COMUNS
+                    if (response.audioUrl() != null && !response.audioUrl().isBlank()) {
+                        File audioFile = getLocalFileFromUrl(response.audioUrl());
+                        if (audioFile != null && audioFile.exists()) {
+                            whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", audioFile);
+                        }
+                    }
+                    if (response.imageUrl() != null && !response.imageUrl().isBlank()) {
+                        File mediaFile = getLocalFileFromUrl(response.imageUrl());
+                        if (mediaFile != null && mediaFile.exists()) {
+                            whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", mediaFile);
+                        }
+                    }
+                    if (respText != null && !respText.isBlank()) {
+                        whatsAppSenderService.sendMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, respText);
+                    }
                 }
             }
 
@@ -127,17 +141,14 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         }
     }
 
-    /**
-     * Resolve a URL num File nativo da base do projeto para que o WhatsApp consiga enviar Mídias do Flow!
-     */
     private File getLocalFileFromUrl(String url) {
         try {
             String fileName = url.substring(url.lastIndexOf("/") + 1);
-            File localDir = new File(System.getProperty("user.dir"), "uploads");
-            File localFile = new File(localDir, fileName);
-            if (localFile.exists()) return localFile;
-        } catch (Exception e) {}
-        return null;
+            String userDir = System.getProperty("user.dir");
+            return new File(userDir + File.separator + "uploads", fileName);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @SuppressWarnings("unchecked")

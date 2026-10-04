@@ -179,25 +179,42 @@ public class ChatServiceImpl implements ChatService {
         }
         if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
 
-        // ✅ CORREÇÃO DE TIPAGEM: Recebe o ChatResponseDTO
+        // CORREÇÃO DE TIPAGEM: Recebe o ChatResponseDTO
         ChatResponseDTO flowResponse = flowEngineService.processFlow(sessionId, tenantId, userTextContent, channel);
 
         if (flowResponse != null) {
-            // ✅ CORREÇÃO VISUAL: Se houver áudio ou vídeo no Flow, anexa a URL ao texto para o Live Chat do Angular poder desenhar o reprodutor.
-            String textToSave = flowResponse.response() != null ? flowResponse.response() : "";
+            String rawResponse = flowResponse.response() != null ? flowResponse.response() : "";
 
-            if (flowResponse.audioUrl() != null && !flowResponse.audioUrl().isBlank()) {
-                textToSave = textToSave + "\n" + flowResponse.audioUrl();
-            }
-            if (flowResponse.imageUrl() != null && !flowResponse.imageUrl().isBlank()) {
-                textToSave = textToSave + "\n" + flowResponse.imageUrl();
+            // CORREÇÃO CRÍTICA DO HANDOFF NO FLOW ENGINE
+            if (flowResponse.requiresHumanHandoff()) {
+                if (customer != null) {
+                    customer.setIsAiActive(false); // BLOQUEIA A IA!
+                    customerDataRepository.save(customer);
+                }
+
+                String handoffMsg = "A transferir para um assistente humano...";
+                if (rawResponse.isBlank()) {
+                    rawResponse = "TEXT:" + handoffMsg;
+                } else if (!rawResponse.contains(handoffMsg)) {
+                    rawResponse += "|||TEXT:" + handoffMsg;
+                }
+
+                // Atualiza o DTO para o Telegram/WhatsApp receberem o texto de transferência
+                flowResponse = new ChatResponseDTO(rawResponse, flowResponse.imageUrl(), flowResponse.audioUrl(), "BOT", true, flowResponse.timestamp());
             }
 
-            saveBotResponse(sessionId, tenantId, textToSave.trim(), "BOT");
+            String dbText = rawResponse;
+            if (rawResponse.contains("TEXT:") || rawResponse.contains("AUDIO:") || rawResponse.contains("VIDEO:")) {
+                dbText = rawResponse.replace("TEXT:", "")
+                        .replace("AUDIO:", "\n(Áudio Anexado) ")
+                        .replace("VIDEO:", "\n(Vídeo Anexado) ")
+                        .replace("|||", "\n");
+            }
+            saveBotResponse(sessionId, tenantId, dbText.trim(), "BOT");
+
             return flowResponse;
         }
 
-        // Se o Flow Visual devolveu nulo (acabou ou estava vazio), a NLP assume!
         log.info("Flow Engine cedeu o comando à NLP/IA. Processando a mensagem: '{}'", userTextContent);
         String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
         String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
