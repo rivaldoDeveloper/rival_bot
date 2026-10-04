@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.UUID; // <-- Asegúrate de importar UUID
 
 @RestController
 @RequestMapping("/api/v1/telegram/bots")
@@ -27,5 +28,12 @@ public class TelegramBotConfigController {
     @GetMapping
     public ResponseEntity<List<TelegramBotConfigEntity>> listBots() {
         return ResponseEntity.ok(service.getAllBots());
+    }
+
+    // <-- NUEVO ENDPOINT PARA ELIMINAR -->
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteBot(@PathVariable UUID id) {
+        service.deleteBot(id);
+        return ResponseEntity.noContent().build();
     }
 }

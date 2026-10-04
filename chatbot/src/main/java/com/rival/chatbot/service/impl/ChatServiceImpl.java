@@ -8,8 +8,10 @@ import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.mapper.ChatMapper;
 import com.rival.chatbot.repository.ChatMessageRepository;
 import com.rival.chatbot.repository.CustomerDataRepository;
+import com.rival.chatbot.repository.meta.MetaAccountRepository;
 import com.rival.chatbot.repository.whatsapp.WhatsAppAccountRepository;
 import com.rival.chatbot.service.*;
+import com.rival.chatbot.service.meta.MetaSenderService;
 import com.rival.chatbot.service.telegram.TelegramBotService;
 import com.rival.chatbot.service.whatsapp.WhatsAppSenderService;
 import org.slf4j.Logger;
@@ -21,6 +23,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -38,15 +41,20 @@ public class ChatServiceImpl implements ChatService {
     private final OwnGenerativeAiService ownGenerativeAiService;
     private final FlowEngineService flowEngineService;
     private final CustomerDataRepository customerDataRepository;
+
     private final WhatsAppSenderService whatsAppSenderService;
     private final WhatsAppAccountRepository whatsAppAccountRepository;
+
+    private final MetaSenderService metaSenderService;
+    private final MetaAccountRepository metaAccountRepository;
 
     public ChatServiceImpl(ChatMessageRepository repository, ChatMapper chatMapper,
                            LocalVectorNlpService localVectorNlpService, DataExtractorService dataExtractorService,
                            OcrService ocrService, AudioTranscriptionService audioTranscriptionService,
                            OwnGenerativeAiService ownGenerativeAiService, FlowEngineService flowEngineService,
                            CustomerDataRepository customerDataRepository, WhatsAppSenderService whatsAppSenderService,
-                           WhatsAppAccountRepository whatsAppAccountRepository) {
+                           WhatsAppAccountRepository whatsAppAccountRepository,
+                           MetaSenderService metaSenderService, MetaAccountRepository metaAccountRepository) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.localVectorNlpService = localVectorNlpService;
@@ -58,6 +66,8 @@ public class ChatServiceImpl implements ChatService {
         this.customerDataRepository = customerDataRepository;
         this.whatsAppSenderService = whatsAppSenderService;
         this.whatsAppAccountRepository = whatsAppAccountRepository;
+        this.metaSenderService = metaSenderService;
+        this.metaAccountRepository = metaAccountRepository;
     }
 
     @Override
@@ -92,6 +102,10 @@ public class ChatServiceImpl implements ChatService {
                 } else if ("TELEGRAM".equals(customer.getChannel())) {
                     TelegramBotService botToUse = findTelegramBotByCustomer(customer);
                     if (botToUse != null) botToUse.sendMessageToClient(externalId, request.message());
+                } else if ("MESSENGER".equals(customer.getChannel()) || "INSTAGRAM".equals(customer.getChannel())) {
+                    metaAccountRepository.findAll().stream()
+                            .filter(acc -> acc.getTenantId().equals(request.tenantId())).findFirst()
+                            .ifPresent(acc -> metaSenderService.sendMessage(acc.getPageAccessToken(), externalId, request.message()));
                 }
             }
         });
@@ -106,7 +120,9 @@ public class ChatServiceImpl implements ChatService {
             File savedFile = saveFileToDisk(file.getBytes(), file.getOriginalFilename());
             String fileUrl = "http://localhost:8080/uploads/" + savedFile.getName();
             String contentToSave = (message != null && !message.isBlank()) ? message + "\n" + fileUrl : fileUrl;
+
             saveBotResponse(sessionId, tenantId, contentToSave, "AGENT");
+
             customerDataRepository.findBySessionId(sessionId).ifPresent(customer -> {
                 customer.setUpdatedAt(LocalDateTime.now());
                 customerDataRepository.save(customer);
@@ -119,6 +135,26 @@ public class ChatServiceImpl implements ChatService {
                     } else if ("TELEGRAM".equals(customer.getChannel())) {
                         TelegramBotService botToUse = findTelegramBotByCustomer(customer);
                         if (botToUse != null) botToUse.sendMediaToClient(externalId, message, savedFile);
+                    } else if ("MESSENGER".equals(customer.getChannel()) || "INSTAGRAM".equals(customer.getChannel())) {
+                        metaAccountRepository.findAll().stream()
+                                .filter(acc -> acc.getTenantId().equals(tenantId)).findFirst()
+                                .ifPresent(acc -> {
+                                    String mimeType = "file";
+                                    try {
+                                        String probe = Files.probeContentType(savedFile.toPath());
+                                        if (probe != null) {
+                                            if (probe.startsWith("image")) mimeType = "image";
+                                            else if (probe.startsWith("video")) mimeType = "video";
+                                            else if (probe.startsWith("audio")) mimeType = "audio";
+                                        }
+                                    } catch (IOException ignored) {}
+
+                                    metaSenderService.sendMediaMessage(acc.getPageAccessToken(), externalId, mimeType, fileUrl);
+
+                                    if (message != null && !message.isBlank()) {
+                                        metaSenderService.sendMessage(acc.getPageAccessToken(), externalId, message);
+                                    }
+                                });
                     }
                 }
             });
@@ -179,13 +215,11 @@ public class ChatServiceImpl implements ChatService {
         }
         if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
 
-        // CORREÇÃO DE TIPAGEM: Recebe o ChatResponseDTO
         ChatResponseDTO flowResponse = flowEngineService.processFlow(sessionId, tenantId, userTextContent, channel);
 
         if (flowResponse != null) {
             String rawResponse = flowResponse.response() != null ? flowResponse.response() : "";
 
-            // CORREÇÃO CRÍTICA DO HANDOFF NO FLOW ENGINE
             if (flowResponse.requiresHumanHandoff()) {
                 if (customer != null) {
                     customer.setIsAiActive(false); // BLOQUEIA A IA!
@@ -199,7 +233,6 @@ public class ChatServiceImpl implements ChatService {
                     rawResponse += "|||TEXT:" + handoffMsg;
                 }
 
-                // Atualiza o DTO para o Telegram/WhatsApp receberem o texto de transferência
                 flowResponse = new ChatResponseDTO(rawResponse, flowResponse.imageUrl(), flowResponse.audioUrl(), "BOT", true, flowResponse.timestamp());
             }
 

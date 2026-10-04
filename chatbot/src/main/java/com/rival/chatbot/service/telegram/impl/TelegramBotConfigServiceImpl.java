@@ -25,13 +25,11 @@ public class TelegramBotConfigServiceImpl implements TelegramBotConfigService {
                 .map(existing -> {
                     existing.setBotToken(botConfig.getBotToken());
                     existing.setActive(botConfig.isActive());
-
                     if (botConfig.getTenantId() != null) {
                         existing.setTenantId(botConfig.getTenantId());
                     } else if (existing.getTenantId() == null) {
                         existing.setTenantId(UUID.randomUUID());
                     }
-
                     return repository.save(existing);
                 })
                 .orElseGet(() -> {
@@ -46,5 +44,12 @@ public class TelegramBotConfigServiceImpl implements TelegramBotConfigService {
     @Transactional(readOnly = true)
     public List<TelegramBotConfigEntity> getAllBots() {
         return repository.findAll();
+    }
+
+    // <-- NUEVO MÉTODO IMPLEMENTADO -->
+    @Override
+    @Transactional
+    public void deleteBot(UUID id) {
+        repository.deleteById(id);
     }
 }
