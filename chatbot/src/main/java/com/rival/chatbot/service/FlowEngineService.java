@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rival.chatbot.domain.CustomerDataEntity;
 import com.rival.chatbot.domain.FlowConfigEntity;
+import com.rival.chatbot.dto.ChatResponseDTO;
 import com.rival.chatbot.dto.flow.FlowDefinitionDTO;
 import com.rival.chatbot.repository.CustomerDataRepository;
 import com.rival.chatbot.repository.FlowConfigRepository;
@@ -11,11 +12,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.Optional;
-import java.util.UUID;
+import java.time.LocalDateTime;
+import java.util.*;
 
 @Service
 public class FlowEngineService {
+
     private static final Logger log = LoggerFactory.getLogger(FlowEngineService.class);
     private final CustomerDataRepository customerDataRepository;
     private final FlowConfigRepository flowConfigRepository;
@@ -25,24 +27,25 @@ public class FlowEngineService {
                              FlowConfigRepository flowConfigRepository) {
         this.customerDataRepository = customerDataRepository;
         this.flowConfigRepository = flowConfigRepository;
-        // ✅ Mantém a sua magia de ignorar propriedades visuais (x, y, styles)
         this.objectMapper = new ObjectMapper()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
-    public String processFlow(UUID sessionId, UUID tenantId, String userMessage, String channel) {
+    // Identifica palavras comuns que devem reiniciar o fluxo visual automaticamente
+    private boolean isResetKeyword(String message) {
+        if (message == null) return false;
+        String lower = message.toLowerCase().trim();
+        return lower.matches("^(oi|olá|ola|menu|inicio|início|começar|start|voltar).*");
+    }
+
+    public ChatResponseDTO processFlow(UUID sessionId, UUID tenantId, String userMessage, String channel) {
         try {
             String currentChannel = (channel != null && !channel.isBlank()) ? channel : "WHATSAPP";
-            Optional<FlowConfigEntity> activeFlowOpt = flowConfigRepository.findFirstByTenantIdAndChannelAndActiveTrue(
-                    tenantId, currentChannel);
+            Optional<FlowConfigEntity> activeFlowOpt = flowConfigRepository.findFirstByTenantIdAndChannelAndActiveTrue(tenantId, currentChannel);
 
-            if (activeFlowOpt.isEmpty()) {
-                log.warn("Nenhum fluxo ativo encontrado no banco para o canal: {}", currentChannel);
-                return null;
-            }
+            if (activeFlowOpt.isEmpty()) return null;
 
             FlowDefinitionDTO flow = objectMapper.readValue(activeFlowOpt.get().getFlowDataJson(), FlowDefinitionDTO.class);
-
             CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId).orElseGet(() -> {
                 CustomerDataEntity newCustomer = new CustomerDataEntity();
                 newCustomer.setSessionId(sessionId);
@@ -53,102 +56,116 @@ public class FlowEngineService {
 
             String currentNodeId = customer.getCurrentNodeId();
 
-            if (currentNodeId == null || currentNodeId.isBlank()) {
-                Optional<FlowDefinitionDTO.FlowNode> triggerNode = flow.nodes().stream()
-                        .filter(n -> "trigger".equalsIgnoreCase(n.type()))
-                        .findFirst();
-
-                if (triggerNode.isEmpty()) {
-                    log.warn("Nó 'trigger' inicial não encontrado no fluxo.");
-                    return null;
+            // REINÍCIO INTELIGENTE: Se estava na IA mas disse "oi/menu", volta para o fluxo visual.
+            if ("NLP_MODE".equals(currentNodeId)) {
+                if (isResetKeyword(userMessage)) {
+                    log.info("Palavra-chave de reinício detetada ({}). A repor o Flow Engine para a sessão {}", userMessage, sessionId);
+                    customer.setCurrentNodeId(null);
+                    currentNodeId = null;
+                } else {
+                    return null; // Continua a falar com a IA Generativa/NLP
                 }
-
-                // 🚀 Aqui chamamos a versão que pula nós desativados
-                String firstActionId = getNextActiveConnectedNode(flow, triggerNode.get().id());
-
-                if (firstActionId == null) return null;
-
-                customer.setCurrentNodeId(firstActionId);
-                customerDataRepository.save(customer);
-                return buildResponseAndCheckEnd(flow, firstActionId, customer);
             }
 
-            // 🚀 E aqui também: Busca o próximo nó ATIVO
-            String nextNodeId = getNextActiveConnectedNode(flow, currentNodeId);
+            Queue<String> queue = new LinkedList<>();
 
-            if (nextNodeId == null) {
-                customer.setCurrentNodeId(null);
+            if (currentNodeId == null || currentNodeId.isBlank()) {
+                Optional<FlowDefinitionDTO.FlowNode> trigger = flow.nodes().stream().filter(n -> "trigger".equalsIgnoreCase(n.type())).findFirst();
+                if (trigger.isEmpty()) return null;
+                queue.addAll(getNextActiveConnectedNodes(flow, trigger.get().id()));
+            } else {
+                queue.addAll(getNextActiveConnectedNodes(flow, currentNodeId));
+            }
+
+            if (queue.isEmpty()) {
+                customer.setCurrentNodeId("NLP_MODE");
                 customerDataRepository.save(customer);
                 return null;
             }
 
-            customer.setCurrentNodeId(nextNodeId);
-            customerDataRepository.save(customer);
-            return buildResponseAndCheckEnd(flow, nextNodeId, customer);
+            StringBuilder combinedText = new StringBuilder();
+            String outAudio = null;
+            String outVideo = null;
+            boolean requiresHandoff = false;
+            boolean pausedAtQuestion = false;
+            Set<String> visited = new HashSet<>();
+
+            // Agrega os nós sequenciais num único envio (Cascata Contínua)
+            while (!queue.isEmpty() && visited.size() < 20) {
+                String currId = queue.poll();
+                if (!visited.add(currId)) continue;
+
+                FlowDefinitionDTO.FlowNode node = getNodeById(flow, currId);
+                if (node == null) continue;
+
+                String type = node.type();
+                FlowDefinitionDTO.NodeData data = node.data();
+
+                if ("text".equalsIgnoreCase(type) && data != null && data.text() != null) {
+                    if (!combinedText.isEmpty()) combinedText.append("\n\n");
+                    combinedText.append(data.text());
+                } else if ("audio".equalsIgnoreCase(type) && data != null && data.audioUrl() != null) {
+                    outAudio = data.audioUrl();
+                } else if ("video".equalsIgnoreCase(type) && data != null && data.videoUrl() != null) {
+                    outVideo = data.videoUrl();
+                } else if ("question".equalsIgnoreCase(type) && data != null && data.text() != null) {
+                    if (!combinedText.isEmpty()) combinedText.append("\n\n");
+                    combinedText.append(data.text());
+
+                    customer.setCurrentNodeId(currId);
+                    customerDataRepository.save(customer);
+                    pausedAtQuestion = true;
+                    break;
+                } else if ("handoff".equalsIgnoreCase(type)) {
+                    requiresHandoff = true;
+                    customer.setCurrentNodeId("NLP_MODE");
+                    customerDataRepository.save(customer);
+                    break;
+                }
+
+                List<String> nextIds = getNextActiveConnectedNodes(flow, currId);
+                if (nextIds.isEmpty()) {
+                    if (!pausedAtQuestion) customer.setCurrentNodeId("NLP_MODE");
+                } else {
+                    queue.addAll(nextIds);
+                }
+            }
+
+            if (!pausedAtQuestion && !requiresHandoff) {
+                customer.setCurrentNodeId("NLP_MODE");
+                customerDataRepository.save(customer);
+            }
+
+            if (combinedText.isEmpty() && outAudio == null && outVideo == null && !requiresHandoff) return null;
+
+            return new ChatResponseDTO(
+                    combinedText.toString().trim(),
+                    outVideo,
+                    outAudio,
+                    "BOT",
+                    requiresHandoff,
+                    LocalDateTime.now()
+            );
 
         } catch (Exception e) {
-            log.error("Erro CRÍTICO na leitura do Fluxo: {}", e.getMessage(), e);
+            log.error("Erro na leitura estruturada do Fluxo.", e);
             return null;
         }
     }
 
-    // ✅ NOVO MÉTODO: Função recursiva para pular nós desativados!
-    private String getNextActiveConnectedNode(FlowDefinitionDTO flow, String currentId) {
-        String targetId = null;
-
-        // 1. Acha o próximo nó imediato conectado à aresta (edge)
-        for (FlowDefinitionDTO.FlowEdge edge : flow.edges()) {
-            if (edge.sourceId() != null && edge.sourceId().equals(currentId)) {
-                targetId = edge.targetId();
-                break;
-            }
-        }
-
-        if (targetId == null) return null; // Fim da linha
-
-        String finalTargetId = targetId;
-        Optional<FlowDefinitionDTO.FlowNode> targetNodeOpt = flow.nodes().stream()
-                .filter(n -> n.id().equals(finalTargetId))
-                .findFirst();
-
-        if (targetNodeOpt.isPresent()) {
-            FlowDefinitionDTO.FlowNode targetNode = targetNodeOpt.get();
-
-            // Verifica se o painel Angular enviou 'active: false'. (Assumindo que null = true)
-            boolean isActive = targetNode.data() == null || targetNode.data().active() == null || targetNode.data().active();
-
-            if (!isActive) {
-                log.info("Nó {} está desativado pelo atendente. Pulando silenciosamente...", targetId);
-                // 🔄 Magia Recursiva: Como ele está desativado, procura o filho DELE
-                return getNextActiveConnectedNode(flow, targetId);
-            }
-        }
-
-        return targetId;
+    private FlowDefinitionDTO.FlowNode getNodeById(FlowDefinitionDTO flow, String id) {
+        return flow.nodes().stream().filter(n -> n.id().equals(id)).findFirst().orElse(null);
     }
 
-    private String buildResponseAndCheckEnd(FlowDefinitionDTO flow, String nodeId, CustomerDataEntity customer) {
-        Optional<FlowDefinitionDTO.FlowNode> nodeOpt = flow.nodes().stream().filter(n -> n.id().equals(nodeId)).findFirst();
-        if (nodeOpt.isEmpty()) return null;
-
-        FlowDefinitionDTO.FlowNode node = nodeOpt.get();
-
-        boolean hasOutgoingEdges = flow.edges().stream().anyMatch(e -> e.sourceId() != null && e.sourceId().equals(nodeId));
-        if (!hasOutgoingEdges) {
-            customer.setCurrentNodeId(null);
-            customerDataRepository.save(customer);
-        }
-
-        // ✅ Lógica de Áudio que você já tinha
-        if ("audio".equalsIgnoreCase(node.type()) && node.data() != null && node.data().audioUrl() != null) {
-            return "AUDIO:" + node.data().audioUrl();
-        }
-
-        // ✅ NOVA Lógica de Vídeo
-        if ("video".equalsIgnoreCase(node.type()) && node.data() != null && node.data().videoUrl() != null) {
-            return "VIDEO:" + node.data().videoUrl();
-        }
-
-        return (node.data() != null && node.data().text() != null) ? node.data().text() : "Aguarde...";
+    private List<String> getNextActiveConnectedNodes(FlowDefinitionDTO flow, String currentId) {
+        return flow.edges().stream()
+                .filter(e -> e.sourceId() != null && e.sourceId().equals(currentId))
+                .map(FlowDefinitionDTO.FlowEdge::targetId)
+                .filter(targetId -> {
+                    FlowDefinitionDTO.FlowNode n = getNodeById(flow, targetId);
+                    if (n == null) return false;
+                    return n.data() == null || n.data().active() == null || n.data().active();
+                })
+                .toList();
     }
 }

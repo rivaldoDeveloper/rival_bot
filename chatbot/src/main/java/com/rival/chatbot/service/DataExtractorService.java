@@ -4,7 +4,6 @@ import com.rival.chatbot.domain.CustomerDataEntity;
 import com.rival.chatbot.repository.CustomerDataRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,14 +21,13 @@ public class DataExtractorService {
     private static final Pattern CPF_PATTERN = Pattern.compile("\\b\\d{3}\\.?\\d{3}\\.?\\d{3}-?\\d{2}\\b");
     private static final Pattern EMAIL_PATTERN = Pattern.compile("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,6}");
     private static final Pattern NAME_PATTERN = Pattern.compile("(?i)(?:meu nome e|me chamo|sou o|sou a)\\s+([A-Za-z ]+(?:\\s+[A-Za-z ]+)*)");
-    private static final Pattern CITY_PATTERN = Pattern.compile("(?i)(?:moro em|cidade de|moro na cidade)\\s+([A-Za-z ]+(?:\\s+[A-Za-z ]+)*)");
-    private static final Pattern NEIGHBORHOOD_PATTERN = Pattern.compile("(?i)(?:bairro|no bairro)\\s+([A-Za-z ]+(?:\\s+[A-Za-z ]+)*)");
 
     public DataExtractorService(CustomerDataRepository repository) {
         this.repository = repository;
     }
 
-    @Async
+    // ✅ CORREÇÃO CRÍTICA: @Async REMOVIDO!
+    // Ao rodar na mesma linha cronológica, o Loop de Repetição do Flow Engine desaparece para sempre.
     @Transactional
     public void extractAndSave(UUID sessionId, UUID tenantId, String message, String channel, String externalId) {
         try {
@@ -55,34 +53,32 @@ public class DataExtractorService {
                 updated = true;
             }
 
-            // Grava o número real do cliente
             if (externalId != null && (customerData.getExternalId() == null || !customerData.getExternalId().equals(externalId))) {
                 customerData.setExternalId(externalId);
                 updated = true;
             }
 
-            Matcher cpfMatcher = CPF_PATTERN.matcher(message);
-            if (cpfMatcher.find()) {
-                customerData.setCpf(cpfMatcher.group().replaceAll("[^0-9]", ""));
-                updated = true;
-            }
-
-            Matcher emailMatcher = EMAIL_PATTERN.matcher(message);
-            if (emailMatcher.find()) {
-                customerData.setEmail(emailMatcher.group());
-                updated = true;
-            }
-
-            Matcher nameMatcher = NAME_PATTERN.matcher(message);
-            if (nameMatcher.find()) {
-                customerData.setName(nameMatcher.group(1));
-                updated = true;
+            if (message != null && !message.isBlank()) {
+                Matcher cpfMatcher = CPF_PATTERN.matcher(message);
+                if (cpfMatcher.find()) {
+                    customerData.setCpf(cpfMatcher.group().replaceAll("[^0-9]", ""));
+                    updated = true;
+                }
+                Matcher emailMatcher = EMAIL_PATTERN.matcher(message);
+                if (emailMatcher.find()) {
+                    customerData.setEmail(emailMatcher.group());
+                    updated = true;
+                }
+                Matcher nameMatcher = NAME_PATTERN.matcher(message);
+                if (nameMatcher.find()) {
+                    customerData.setName(nameMatcher.group(1));
+                    updated = true;
+                }
             }
 
             if (updated) {
                 repository.save(customerData);
             }
-
         } catch (Exception e) {
             log.error("Erro ao extrair dados", e);
         }

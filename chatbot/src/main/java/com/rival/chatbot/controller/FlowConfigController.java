@@ -33,7 +33,7 @@ public class FlowConfigController {
             FlowConfigEntity entityToUpdate = existingFlows.get(0);
             entityToUpdate.setFlowDataJson(flowConfig.getFlowDataJson());
             entityToUpdate.setName(flowConfig.getName());
-            entityToUpdate.setActive(flowConfig.isActive());
+            entityToUpdate.setActive(flowConfig.isActive()); // Garante a atualização da Flag Principal
 
             // Deleta as duplicatas fantasmas para evitar o loop
             if (existingFlows.size() > 1) {
