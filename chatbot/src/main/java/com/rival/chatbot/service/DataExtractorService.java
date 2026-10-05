@@ -83,4 +83,17 @@ public class DataExtractorService {
             log.error("Erro ao extrair dados", e);
         }
     }
+
+    // Adicione este método dentro da classe DataExtractorService
+    @Transactional
+    public void saveCustomField(UUID sessionId, String fieldKey, String fieldValue) {
+        if (fieldKey == null || fieldKey.isBlank() || fieldValue == null || fieldValue.isBlank()) return;
+
+        repository.findBySessionId(sessionId).ifPresent(customer -> {
+            // Salva o campo customizado criado pelo frontend diretamente no mapa
+            customer.getCustomData().put(fieldKey.toUpperCase().trim(), fieldValue.trim());
+            repository.save(customer);
+            log.info("CRM Atualizado: Sessão {} salvou [{} = {}]", sessionId, fieldKey, fieldValue);
+        });
+    }
 }

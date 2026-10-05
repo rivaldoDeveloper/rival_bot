@@ -21,12 +21,15 @@ public class FlowEngineService {
     private static final Logger log = LoggerFactory.getLogger(FlowEngineService.class);
     private final CustomerDataRepository customerDataRepository;
     private final FlowConfigRepository flowConfigRepository;
+    private final DataExtractorService dataExtractorService;
     private final ObjectMapper objectMapper;
 
     public FlowEngineService(CustomerDataRepository customerDataRepository,
-                             FlowConfigRepository flowConfigRepository) {
+                             FlowConfigRepository flowConfigRepository,
+                             DataExtractorService dataExtractorService) {
         this.customerDataRepository = customerDataRepository;
         this.flowConfigRepository = flowConfigRepository;
+        this.dataExtractorService = dataExtractorService;
         this.objectMapper = new ObjectMapper()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
@@ -55,6 +58,16 @@ public class FlowEngineService {
             });
 
             String currentNodeId = customer.getCurrentNodeId();
+
+            // Captura a resposta do cliente para o CRM se estava parado num bloco 'extract'
+            if (currentNodeId != null && !currentNodeId.isBlank() && !"NLP_MODE".equals(currentNodeId)) {
+                FlowDefinitionDTO.FlowNode lastNode = getNodeById(flow, currentNodeId);
+                if (lastNode != null && "extract".equalsIgnoreCase(lastNode.type())) {
+                    if (lastNode.data() != null && lastNode.data().fieldToExtract() != null) {
+                        dataExtractorService.saveCustomField(sessionId, lastNode.data().fieldToExtract(), userMessage);
+                    }
+                }
+            }
 
             // REINÍCIO INTELIGENTE: Se estava na IA mas disse "oi/menu", volta para o fluxo visual.
             if ("NLP_MODE".equals(currentNodeId)) {
@@ -125,15 +138,13 @@ public class FlowEngineService {
                     customer.setCurrentNodeId("NLP_MODE");
                     continue;
                 } else if (type.contains("extract")) {
-                    // Bloco de Extração CRM
-                    // Apenas regista a passagem e continua o fluxo, pois o DataExtractorService atua nos bastidores.
-                    List<String> nextIds = getNextActiveConnectedNodes(flow, currId);
-                    if (nextIds.isEmpty() && sequence.isEmpty() && !requiresHandoff) {
-                        // Se for o último bloco e não houver mais nada a seguir, previne que a IA seja invocada
-                        sequence.add("TEXT:Dados processados e registados no sistema.");
+                    // Pausa o fluxo para pedir o dado ao cliente
+                    if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
+                        questionText = data.text().trim();
+                        customer.setCurrentNodeId(currId);
+                        pausedAtQuestion = true;
+                        continue;
                     }
-                    queue.addAll(nextIds);
-                    continue;
                 }
 
                 List<String> nextIds = getNextActiveConnectedNodes(flow, currId);

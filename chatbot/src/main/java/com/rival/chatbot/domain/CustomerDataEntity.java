@@ -2,6 +2,8 @@ package com.rival.chatbot.domain;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 @Entity
@@ -46,6 +48,12 @@ public class CustomerDataEntity {
 
     @Column(name = "is_ai_active")
     private Boolean isAiActive = true;
+
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "customer_custom_data", joinColumns = @JoinColumn(name = "customer_id"))
+    @MapKeyColumn(name = "field_key")
+    @Column(name = "field_value", columnDefinition = "TEXT")
+    private Map<String, String> customData = new HashMap<>();
 
     public CustomerDataEntity() {}
 
@@ -97,4 +105,7 @@ public class CustomerDataEntity {
 
     public Boolean getIsAiActive() { return isAiActive; }
     public void setIsAiActive(Boolean isAiActive) { this.isAiActive = isAiActive; }
+
+    public Map<String, String> getCustomData() { return customData; }
+    public void setCustomData(Map<String, String> customData) { this.customData = customData; }
 }

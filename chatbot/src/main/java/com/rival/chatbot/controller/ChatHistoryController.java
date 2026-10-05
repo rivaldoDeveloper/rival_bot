@@ -43,6 +43,7 @@ public class ChatHistoryController {
 
         Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
         Page<ChatMessageEntity> messages = chatMessageRepository.findBySessionId(sessionId, pageable);
+
         return ResponseEntity.ok(messages);
     }
 
@@ -119,6 +120,9 @@ public class ChatHistoryController {
         dto.put("unread", customer.getUnreadCount() != null ? customer.getUnreadCount() : 0);
         dto.put("isAiActive", customer.getIsAiActive() != null ? customer.getIsAiActive() : true);
         dto.put("channel", channel);
+
+        // Renderiza os dados extraídos pelo Flow Engine para o Frontend
+        dto.put("customData", customer.getCustomData());
 
         return dto;
     }

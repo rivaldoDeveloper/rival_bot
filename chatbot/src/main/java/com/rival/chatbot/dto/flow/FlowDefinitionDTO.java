@@ -18,8 +18,9 @@ public record FlowDefinitionDTO(
     public record NodeData(
             String text,
             String audioUrl,
-            String videoUrl,     // ✅ Adicionado para suportar o nó de vídeo
-            Boolean active       // ✅ Adicionado para controlar o bypass do nó (Boolean wrapper para permitir null)
+            String videoUrl,     // Adicionado para suportar o nó de vídeo
+            Boolean active,      // Adicionado para controlar o bypass do nó
+            String fieldToExtract // NOVO: Adicionado corretamente como atributo para a extração CRM
     ) {}
 
     public record FlowEdge(
