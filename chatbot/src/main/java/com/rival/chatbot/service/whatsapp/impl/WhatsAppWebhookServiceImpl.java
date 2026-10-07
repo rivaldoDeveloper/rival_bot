@@ -27,7 +27,6 @@ import java.util.UUID;
 public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
     private static final Logger log = LoggerFactory.getLogger(WhatsAppWebhookServiceImpl.class);
-
     private final ChatService chatService;
     private final WhatsAppSenderService whatsAppSenderService;
     private final WhatsAppAccountRepository whatsAppAccountRepository;
@@ -81,11 +80,11 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             if (finalContent.isEmpty()) return;
 
             log.info("Mensagem WhatsApp recebida -> De: {}, Conteúdo: '{}'", userPhoneNumber, finalContent);
+
             userPhoneNumber = userPhoneNumber.split("@")[0];
-
             UUID sessionId = UUID.nameUUIDFromBytes(userPhoneNumber.getBytes());
-            ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, account.getTenantId(), finalContent, "WHATSAPP", userPhoneNumber);
 
+            ChatRequestDTO chatRequest = new ChatRequestDTO(sessionId, account.getTenantId(), finalContent, "WHATSAPP", userPhoneNumber);
             ChatResponseDTO response = chatService.processFlowMessage(chatRequest);
 
             String pushName = data.containsKey("pushName") ? (String) data.get("pushName") : null;
@@ -98,36 +97,51 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 });
             }
 
-            //CORREÇÃO CRÍTICA DO WHATSAPP: Envia Áudios e Imagens lendo o ficheiro gerado!
+            // CORREÇÃO CRÍTICA: Enviar mediante URL se estiver na nuvem (Cloudinary) ou ficheiro local
             if (response != null) {
                 String respText = response.response();
 
-                // CORREÇÃO: Reconhece os marcadores mesmo que venha apenas 1 bloco (sem o |||)
                 if (respText != null && (respText.contains("|||") || respText.startsWith("TEXT:") || respText.startsWith("AUDIO:") || respText.startsWith("VIDEO:"))) {
                     String[] parts = respText.split("\\|\\|\\|");
                     for (String part : parts) {
                         if (part.startsWith("AUDIO:") || part.startsWith("VIDEO:")) {
-                            String url = part.substring(6);
-                            File mediaFile = getLocalFileFromUrl(url);
-                            if (mediaFile != null && mediaFile.exists()) {
-                                whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", mediaFile);
+                            String url = part.substring(6).trim();
+                            String mime = part.startsWith("AUDIO:") ? "audio/webm" : "video/mp4"; // Força o MIME Type correto
+
+                            if (url.startsWith("http")) {
+                                // Manda diretamente da Nuvem (Cloudinary)
+                                whatsAppSenderService.sendMediaMessageFromUrl(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", url, mime);
+                            } else {
+                                // Manda do disco local
+                                File mediaFile = getLocalFileFromUrl(url);
+                                if (mediaFile != null && mediaFile.exists()) {
+                                    whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", mediaFile);
+                                }
                             }
                         } else if (part.startsWith("TEXT:")) {
-                            whatsAppSenderService.sendMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, part.substring(5));
+                            whatsAppSenderService.sendMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, part.substring(5).trim());
                         }
                     }
                 } else {
-                    // IA / MENSAGENS COMUNS
+                    // IA / MENSAGENS COMUNS (Modo Legado)
                     if (response.audioUrl() != null && !response.audioUrl().isBlank()) {
-                        File audioFile = getLocalFileFromUrl(response.audioUrl());
-                        if (audioFile != null && audioFile.exists()) {
-                            whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", audioFile);
+                        if (response.audioUrl().startsWith("http")) {
+                            whatsAppSenderService.sendMediaMessageFromUrl(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", response.audioUrl(), "audio/webm");
+                        } else {
+                            File audioFile = getLocalFileFromUrl(response.audioUrl());
+                            if (audioFile != null && audioFile.exists()) {
+                                whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", audioFile);
+                            }
                         }
                     }
                     if (response.imageUrl() != null && !response.imageUrl().isBlank()) {
-                        File mediaFile = getLocalFileFromUrl(response.imageUrl());
-                        if (mediaFile != null && mediaFile.exists()) {
-                            whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", mediaFile);
+                        if (response.imageUrl().startsWith("http")) {
+                            whatsAppSenderService.sendMediaMessageFromUrl(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", response.imageUrl(), "image/jpeg");
+                        } else {
+                            File mediaFile = getLocalFileFromUrl(response.imageUrl());
+                            if (mediaFile != null && mediaFile.exists()) {
+                                whatsAppSenderService.sendMediaMessage(account.getInstanceName(), account.getEvolutionApiKey(), userPhoneNumber, "", mediaFile);
+                            }
                         }
                     }
                     if (respText != null && !respText.isBlank()) {
@@ -156,6 +170,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         try {
             Map<String, Object> messageContent = (Map<String, Object>) msgObject.get("message");
             if (messageContent == null) return null;
+
             String mediaType = null;
             String extension = ".bin";
 
@@ -167,9 +182,11 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 mediaType = "audio";
                 extension = "_voz.ogg";
             }
+
             if (mediaType == null) return null;
 
             String url = evolutionApiUrl + "/chat/getBase64FromMediaMessage/" + instanceName;
+
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("apikey", apiKey);
@@ -183,16 +200,21 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             if (response.getBody() != null && response.getBody().containsKey("base64")) {
                 String base64Data = (String) response.getBody().get("base64");
                 if (base64Data == null || base64Data.isBlank()) return null;
+
                 if (base64Data.contains(",")) base64Data = base64Data.split(",")[1];
 
                 byte[] decodedBytes = java.util.Base64.getDecoder().decode(base64Data);
+
                 File dir = new File("uploads");
                 if (!dir.exists()) dir.mkdirs();
+
                 String fileName = "wa_" + UUID.randomUUID().toString().substring(0, 8) + extension;
                 File file = new File(dir, fileName);
+
                 try (java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
                     fos.write(decodedBytes);
                 }
+
                 return "http://localhost:8080/uploads/" + fileName;
             }
         } catch (Exception e) {
@@ -218,27 +240,34 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     @SuppressWarnings("unchecked")
     private String extractUserText(Map<String, Object> msgObject) {
         if (msgObject == null) return null;
+
         Map<String, Object> messageContent = msgObject;
         if (msgObject.containsKey("message") && msgObject.get("message") instanceof Map) {
             messageContent = (Map<String, Object>) msgObject.get("message");
         }
+
         if (messageContent.containsKey("conversation")) return (String) messageContent.get("conversation");
+
         if (messageContent.containsKey("extendedTextMessage")) {
             Object extText = messageContent.get("extendedTextMessage");
             if (extText instanceof Map) return (String) ((Map<String, Object>) extText).get("text");
         }
+
         if (messageContent.containsKey("imageMessage")) {
             Object imgMsg = messageContent.get("imageMessage");
             if (imgMsg instanceof Map && ((Map<?, ?>) imgMsg).containsKey("caption")) return (String) ((Map<String, Object>) imgMsg).get("caption");
         }
+
         if (messageContent.containsKey("videoMessage")) {
             Object vidMsg = messageContent.get("videoMessage");
             if (vidMsg instanceof Map && ((Map<?, ?>) vidMsg).containsKey("caption")) return (String) ((Map<String, Object>) vidMsg).get("caption");
         }
+
         if (messageContent.containsKey("documentMessage")) {
             Object docMsg = messageContent.get("documentMessage");
             if (docMsg instanceof Map && ((Map<?, ?>) docMsg).containsKey("caption")) return (String) ((Map<String, Object>) docMsg).get("caption");
         }
+
         return null;
     }
 }

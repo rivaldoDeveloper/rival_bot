@@ -32,18 +32,14 @@ public class WhatsAppSenderService {
 
     public void sendMessage(String instanceName, String apikey, String toPhoneNumber, String messageText) {
         if (messageText == null || messageText.isBlank()) return;
-
         String url = evolutionApiUrl + "/message/sendText/" + instanceName;
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("apikey", apikey);
-
         Map<String, Object> body = new HashMap<>();
         body.put("number", toPhoneNumber);
         body.put("text", messageText);
-
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-
         try {
             ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
             log.info("Mensagem de texto enviada via Evolution API. Status: {}", response.getStatusCode());
@@ -54,15 +50,54 @@ public class WhatsAppSenderService {
         }
     }
 
+    // NOVO MÉTODO: Permite enviar Mídia diretamente pelo URL da Nuvem (Cloudinary)
+    public void sendMediaMessageFromUrl(String instanceName, String apikey, String toPhoneNumber, String caption, String urlStr, String mimeType) {
+        try {
+            boolean isAudio = mimeType != null && (mimeType.startsWith("audio") || urlStr.endsWith(".ogg") || urlStr.endsWith(".mp3") || urlStr.endsWith(".webm"));
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("apikey", apikey);
+
+            Map<String, Object> body = new HashMap<>();
+            body.put("number", toPhoneNumber);
+
+            String endpoint;
+            if (isAudio) {
+                endpoint = evolutionApiUrl + "/message/sendWhatsAppAudio/" + instanceName;
+                body.put("audio", urlStr);
+            } else {
+                endpoint = evolutionApiUrl + "/message/sendMedia/" + instanceName;
+                String mediaType = "document";
+                if (mimeType != null) {
+                    if (mimeType.startsWith("image")) mediaType = "image";
+                    else if (mimeType.startsWith("video")) mediaType = "video";
+                } else if (urlStr.endsWith(".mp4")) {
+                    mediaType = "video";
+                } else if (urlStr.endsWith(".jpg") || urlStr.endsWith(".png")) {
+                    mediaType = "image";
+                }
+                body.put("mediatype", mediaType);
+                body.put("media", urlStr);
+                if (caption != null && !caption.isBlank()) body.put("caption", caption);
+            }
+
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            restTemplate.postForEntity(endpoint, request, String.class);
+            log.info("Mídia via URL enviada com sucesso para o WhatsApp.");
+        } catch (Exception e) {
+            log.error("Erro ao enviar mídia por URL via WhatsApp", e);
+        }
+    }
+
+    // MÉTODO ATUALIZADO: Usado quando o ficheiro está no disco local
     public void sendMediaMessage(String instanceName, String apikey, String toPhoneNumber, String caption, File file) {
         try {
             String fileName = file.getName().toLowerCase();
             String mimeType = Files.probeContentType(file.toPath());
             if (mimeType == null) mimeType = "application/octet-stream";
 
-            // ✅ SE FOR GRAVAÇÃO DO PAINEL, É ÁUDIO E PONTO FINAL (Ignora se o sistema achar que webm é vídeo)
-            boolean isAudio = mimeType.startsWith("audio") || fileName.contains("gravacao_audio") || fileName.endsWith(".ogg") || fileName.endsWith(".mp3") || fileName.endsWith(".webm");
-
+            boolean isAudio = mimeType.startsWith("audio") || fileName.contains("gravacao_audio") || fileName.endsWith(".ogg") || fileName.endsWith(".mp3") || fileName.endsWith(".webm") || fileName.endsWith(".m4a");
             byte[] fileContent = Files.readAllBytes(file.toPath());
             String base64 = Base64.getEncoder().encodeToString(fileContent);
 
@@ -74,18 +109,16 @@ public class WhatsAppSenderService {
             body.put("number", toPhoneNumber);
 
             String url;
-
             if (isAudio) {
-                // Endpoint da Evolution API para transformar em Voice Note verde nativa
                 url = evolutionApiUrl + "/message/sendWhatsAppAudio/" + instanceName;
                 body.put("audio", base64);
-                // Força o mimetype de áudio para a API do WhatsApp não se confundir
-                body.put("mimetype", "audio/webm");
+                // Força o mimetype de conversão perfeito na Evolution API
+                body.put("mimetype", "audio/mp4");
             } else {
                 url = evolutionApiUrl + "/message/sendMedia/" + instanceName;
                 String mediaType = "document";
-                if (mimeType.startsWith("image")) mediaType = "image";
-                else if (mimeType.startsWith("video")) mediaType = "video";
+                if (mimeType.startsWith("image") || fileName.endsWith(".jpg") || fileName.endsWith(".png")) mediaType = "image";
+                else if (mimeType.startsWith("video") || fileName.endsWith(".mp4")) mediaType = "video";
 
                 body.put("mediatype", mediaType);
                 body.put("mimetype", mimeType);
@@ -96,9 +129,8 @@ public class WhatsAppSenderService {
             }
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
-            log.info("Mídia enviada via WhatsApp. Status: {}", response.getStatusCode());
-
+            restTemplate.postForEntity(url, request, String.class);
+            log.info("Mídia local enviada via WhatsApp.");
         } catch (Exception e) {
             log.error("Erro ao enviar mídia via WhatsApp", e);
         }

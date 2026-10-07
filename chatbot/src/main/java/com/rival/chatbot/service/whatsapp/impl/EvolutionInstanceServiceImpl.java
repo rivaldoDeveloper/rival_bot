@@ -40,6 +40,26 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
         this.restTemplate = new RestTemplate();
     }
 
+    // NOVO MÉTODO PARA ATUALIZAR O NOME NO WHATSAPP
+    private void updateWhatsAppProfileName(String instanceName) {
+        try {
+            Map<String, Object> profileBody = new HashMap<>();
+            profileBody.put("name", "RivalChatbot");
+            // Se desejar mudar o recado/descrição também, descomente a linha abaixo:
+            // profileBody.put("description", "Atendimento Automatizado RivalChat");
+
+            restTemplate.exchange(
+                    evolutionApiUrl + "/chat/updateProfileName/" + instanceName,
+                    HttpMethod.POST,
+                    new HttpEntity<>(profileBody, buildHeaders()),
+                    String.class
+            );
+            log.info("Nome de exibição do WhatsApp atualizado para 'RivalChatbot' na instância: {}", instanceName);
+        } catch (Exception e) {
+            log.warn("Aviso ao tentar atualizar o nome do WhatsApp (O WhatsApp precisa estar conectado primeiro): {}", e.getMessage());
+        }
+    }
+
     @Override
     public String createInstanceAndGetQR(UUID tenantId) {
         log.info("1. Iniciando conexão (Modo QR) para tenant: {}", tenantId);
@@ -85,7 +105,9 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
                     new ParameterizedTypeReference<Map<String, Object>>() {}
             );
 
-            // ARQUITETURA RESILIENTE: Auto-Ativa o Webhook imediatamente após recriar a instância!
+            // Tenta mudar o nome imediatamente após criar
+            updateWhatsAppProfileName(newInstanceName);
+
             try { activateBot(tenantId); } catch (Exception e) { log.warn("Aviso na auto-ativação do webhook: {}", e.getMessage()); }
 
         } catch (Exception e) {
@@ -94,6 +116,7 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
 
         String base64Qr = null;
         log.info("3. Solicitando imagem do QR Code à API...");
+
         for (int i = 1; i <= 15; i++) {
             try {
                 Thread.sleep(3000);
@@ -103,6 +126,7 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
                         new HttpEntity<>(headers),
                         new ParameterizedTypeReference<Map<String, Object>>() {}
                 );
+
                 base64Qr = extrairQrCode(connectResponse.getBody());
                 if (base64Qr != null && !base64Qr.isBlank()) {
                     break;
@@ -114,6 +138,7 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
             log.info("4. QR Code gerado com sucesso! Aguardando leitura segura.");
             return base64Qr;
         }
+
         throw new IllegalStateException("A Evolution API não conseguiu gerar a imagem do QR Code a tempo. Tente novamente.");
     }
 
@@ -136,9 +161,11 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
         );
 
         String base64Qr = extrairQrCode(connectResponse.getBody());
+
         if (base64Qr != null && !base64Qr.isBlank()) {
             return base64Qr;
         }
+
         throw new IllegalStateException("O WhatsApp já está conectado ou a imagem ainda está a ser gerada.");
     }
 
@@ -171,6 +198,9 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
         );
 
         log.info(">> Webhook ativado com segurança para a instância {}!", account.getInstanceName());
+
+        // Quando você clica no botão "Ativar/Conectar", enviamos outro pedido para garantir que o nome seja forçado após a conexão
+        updateWhatsAppProfileName(account.getInstanceName());
     }
 
     @Override
@@ -200,6 +230,7 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
     @Override
     public String getPairingCode(UUID tenantId, String phoneNumber) {
         log.info("Iniciando requisição de Pairing Code para o tenant: {}, número: {}", tenantId, phoneNumber);
+
         String cleanNumber = phoneNumber.replaceAll("[^0-9]", "");
 
         WhatsAppAccountEntity account = repository.findAll().stream()
@@ -245,7 +276,9 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
                     new ParameterizedTypeReference<Map<String, Object>>() {}
             );
 
-            // ARQUITETURA RESILIENTE: Auto-Ativa o Webhook imediatamente após recriar a instância!
+            // Tenta mudar o nome imediatamente após criar
+            updateWhatsAppProfileName(newInstanceName);
+
             try { activateBot(tenantId); } catch (Exception e) { log.warn("Aviso na auto-ativação do webhook: {}", e.getMessage()); }
 
             Thread.sleep(3000);
@@ -255,8 +288,8 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
         }
 
         log.info("2. Solicitando o código de emparelhamento final à API...");
-
         String url = evolutionApiUrl + "/instance/connect/" + newInstanceName + "?number=" + cleanNumber;
+
         Map<String, String> requestBody = new HashMap<>();
         requestBody.put("number", cleanNumber);
 
@@ -270,24 +303,22 @@ public class EvolutionInstanceServiceImpl implements EvolutionInstanceService {
                 );
 
                 Map<String, Object> responseBody = response.getBody();
-
                 if (responseBody != null) {
                     if (responseBody.containsKey("pairingCode") && responseBody.get("pairingCode") != null) {
                         String code = String.valueOf(responseBody.get("pairingCode"));
                         if (!code.isBlank() && !code.equals("null")) {
-                            log.info("✅ Pairing code gerado com sucesso: {}", code);
+                            log.info("✓ Pairing code gerado com sucesso: {}", code);
                             return code;
                         }
                     }
                     if (responseBody.containsKey("code") && responseBody.get("code") != null) {
                         String code = String.valueOf(responseBody.get("code"));
                         if (!code.isBlank() && !code.equals("null") && code.length() <= 12 && !code.contains("@")) {
-                            log.info("✅ Pairing code gerado com sucesso (chave 'code'): {}", code);
+                            log.info("✓ Pairing code gerado com sucesso (chave 'code'): {}", code);
                             return code;
                         }
                     }
                 }
-
                 log.info("Tentativa {}/10: Motor Baileys ainda a inicializar. Aguardando 2 segundos...", i);
                 Thread.sleep(2000);
             } catch (Exception e) {

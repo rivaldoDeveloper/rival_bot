@@ -31,6 +31,7 @@ import java.security.cert.X509Certificate;
 import java.util.UUID;
 
 public class TelegramBotService extends TelegramLongPollingBot {
+
     private static final Logger log = LoggerFactory.getLogger(TelegramBotService.class);
     private final ChatService chatService;
     private final CustomerDataRepository customerDataRepository;
@@ -49,6 +50,21 @@ public class TelegramBotService extends TelegramLongPollingBot {
     @Override
     public String getBotUsername() { return botConfig.getBotUsername(); }
 
+    private File downloadFromUrl(String urlStr, String extension) {
+        try {
+            java.net.URL url = new java.net.URL(urlStr);
+            java.io.InputStream in = url.openStream();
+            File dir = new File("uploads");
+            if (!dir.exists()) dir.mkdirs();
+            File tempFile = new File(dir, "tg_dl_" + UUID.randomUUID().toString().substring(0,8) + extension);
+            java.nio.file.Files.copy(in, tempFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return tempFile;
+        } catch (Exception e) {
+            log.error("Erro ao baixar ficheiro da nuvem para Telegram: " + urlStr, e);
+            return null;
+        }
+    }
+
     @Override
     public void onUpdateReceived(Update update) {
         try {
@@ -56,6 +72,7 @@ public class TelegramBotService extends TelegramLongPollingBot {
                 Long chatId = update.getMessage().getChatId();
                 UUID tenantId = botConfig.getTenantId();
                 UUID sessionId = UUID.nameUUIDFromBytes(chatId.toString().getBytes());
+
                 String userText = "";
                 String mediaUrl = null;
 
@@ -102,70 +119,44 @@ public class TelegramBotService extends TelegramLongPollingBot {
                     if (response != null) {
                         String respText = response.response();
 
-                        // ✅ CORREÇÃO: Reconhece os marcadores mesmo que venha apenas 1 bloco (sem o |||)
                         if (respText != null && (respText.contains("|||") || respText.startsWith("TEXT:") || respText.startsWith("AUDIO:") || respText.startsWith("VIDEO:"))) {
                             String[] parts = respText.split("\\|\\|\\|");
                             for (String part : parts) {
                                 if (part.startsWith("AUDIO:")) {
-                                    String url = part.substring(6);
-                                    InputFile inputFile = getTelegramInputFile(url);
-                                    if (inputFile != null) {
+                                    String url = part.substring(6).trim();
+                                    if (url.contains("cloudinary.com") && url.lastIndexOf('.') > url.lastIndexOf('/')) {
+                                        url = url.substring(0, url.lastIndexOf('.')) + ".mp3";
+                                    }
+                                    File localFile = downloadFromUrl(url, ".mp3");
+                                    if (localFile != null) {
                                         try {
-                                            if (url.endsWith(".ogg") || url.endsWith(".webm")) {
-                                                SendVoice voiceMsg = new SendVoice(); voiceMsg.setChatId(chatId.toString()); voiceMsg.setVoice(inputFile); execute(voiceMsg);
-                                            } else {
-                                                SendAudio audioMsg = new SendAudio(); audioMsg.setChatId(chatId.toString()); audioMsg.setAudio(inputFile); execute(audioMsg);
-                                            }
+                                            SendAudio audioMsg = new SendAudio();
+                                            audioMsg.setChatId(chatId.toString());
+                                            audioMsg.setAudio(new InputFile(localFile));
+                                            execute(audioMsg);
                                         } catch (Exception ex) { log.error("Erro ao enviar áudio no Telegram", ex); }
-                                    } else {
-                                        sendReply(chatId, "⚠️ [O áudio anexado no fluxo não foi encontrado no servidor]");
                                     }
                                 } else if (part.startsWith("VIDEO:")) {
-                                    String url = part.substring(6);
-                                    InputFile inputFile = getTelegramInputFile(url);
-                                    if (inputFile != null) {
+                                    String url = part.substring(6).trim();
+                                    if (url.contains("cloudinary.com") && url.lastIndexOf('.') > url.lastIndexOf('/')) {
+                                        url = url.substring(0, url.lastIndexOf('.')) + ".mp4";
+                                    }
+                                    File localFile = downloadFromUrl(url, ".mp4");
+                                    if (localFile != null) {
                                         try {
-                                            if (url.endsWith(".mp4") || url.endsWith(".mov")) {
-                                                SendVideo videoMsg = new SendVideo(); videoMsg.setChatId(chatId.toString()); videoMsg.setVideo(inputFile); execute(videoMsg);
-                                            } else {
-                                                SendPhoto photoMsg = new SendPhoto(); photoMsg.setChatId(chatId.toString()); photoMsg.setPhoto(inputFile); execute(photoMsg);
-                                            }
-                                        } catch (Exception ex) { log.error("Erro ao enviar imagem no Telegram", ex); }
-                                    } else {
-                                        sendReply(chatId, "⚠ [A mídia anexada no fluxo não foi encontrada no servidor]");
+                                            SendVideo videoMsg = new SendVideo();
+                                            videoMsg.setChatId(chatId.toString());
+                                            videoMsg.setVideo(new InputFile(localFile));
+                                            execute(videoMsg);
+                                        } catch (Exception ex) { log.error("Erro ao enviar vídeo no Telegram", ex); }
                                     }
                                 } else if (part.startsWith("TEXT:")) {
-                                    sendReply(chatId, part.substring(5));
+                                    sendReply(chatId, part.substring(5).trim());
                                 }
                             }
                         } else {
-                            // MODO LEGADO (NLP / IA / Mensagens Simples)
                             if (respText != null && !respText.isBlank()) {
                                 sendReply(chatId, respText);
-                            }
-                            if (response.audioUrl() != null && !response.audioUrl().isBlank()) {
-                                InputFile inputFile = getTelegramInputFile(response.audioUrl());
-                                if (inputFile != null) {
-                                    try {
-                                        if (response.audioUrl().endsWith(".ogg") || response.audioUrl().endsWith(".webm")) {
-                                            SendVoice voiceMsg = new SendVoice(); voiceMsg.setChatId(chatId.toString()); voiceMsg.setVoice(inputFile); execute(voiceMsg);
-                                        } else {
-                                            SendAudio audioMsg = new SendAudio(); audioMsg.setChatId(chatId.toString()); audioMsg.setAudio(inputFile); execute(audioMsg);
-                                        }
-                                    } catch (Exception ex) {}
-                                }
-                            }
-                            if (response.imageUrl() != null && !response.imageUrl().isBlank()) {
-                                InputFile inputFile = getTelegramInputFile(response.imageUrl());
-                                if (inputFile != null) {
-                                    try {
-                                        if (response.imageUrl().endsWith(".mp4") || response.imageUrl().endsWith(".mov")) {
-                                            SendVideo videoMsg = new SendVideo(); videoMsg.setChatId(chatId.toString()); videoMsg.setVideo(inputFile); execute(videoMsg);
-                                        } else {
-                                            SendPhoto photoMsg = new SendPhoto(); photoMsg.setChatId(chatId.toString()); photoMsg.setPhoto(inputFile); execute(photoMsg);
-                                        }
-                                    } catch (Exception ex) {}
-                                }
                             }
                         }
                     }
@@ -208,10 +199,39 @@ public class TelegramBotService extends TelegramLongPollingBot {
         try { execute(message); } catch (Exception e) {}
     }
 
+    // MÉTODO 1: Usado pelo Webhook (Ficheiros vindos do Flow Engine via URL convertido para local)
+    public void sendMediaUrlToClient(String chatId, String caption, String urlStr, String mimeType) {
+        try {
+            boolean isAudio = mimeType != null && mimeType.startsWith("audio");
+            boolean isVideo = mimeType != null && mimeType.startsWith("video");
+
+            if (urlStr.contains("cloudinary.com")) {
+                if (isAudio) {
+                    urlStr = urlStr.substring(0, urlStr.lastIndexOf('.')) + ".ogg";
+                } else if (isVideo) {
+                    urlStr = urlStr.substring(0, urlStr.lastIndexOf('.')) + ".mp4";
+                }
+            }
+
+            InputFile inputFile = getTelegramInputFile(urlStr);
+            if (mimeType != null && mimeType.startsWith("image")) {
+                SendPhoto msg = new SendPhoto(); msg.setChatId(chatId); msg.setPhoto(inputFile); if (caption != null) msg.setCaption(caption); execute(msg);
+            } else if (isVideo) {
+                SendVideo msg = new SendVideo(); msg.setChatId(chatId); msg.setVideo(inputFile); if (caption != null) msg.setCaption(caption); execute(msg);
+            } else if (isAudio) {
+                SendVoice msg = new SendVoice(); msg.setChatId(chatId); msg.setVoice(inputFile); if (caption != null) msg.setCaption(caption); execute(msg);
+            } else {
+                SendDocument msg = new SendDocument(); msg.setChatId(chatId); msg.setDocument(inputFile); if (caption != null) msg.setCaption(caption); execute(msg);
+            }
+        } catch (Exception e) {}
+    }
+
+    // MÉTODO 2 (RESTAURADO): Usado pelo ChatServiceImpl quando o Operador Humano anexa um ficheiro do PC
     public void sendMediaToClient(String chatId, String caption, File file) {
         try {
             String fileName = file.getName().toLowerCase();
             String mimeType = Files.probeContentType(file.toPath());
+
             boolean isAudio = (mimeType != null && mimeType.startsWith("audio")) || fileName.endsWith(".mp3") || fileName.endsWith(".webm") || fileName.endsWith(".ogg");
             boolean isVideo = (mimeType != null && mimeType.startsWith("video")) && !isAudio;
 
@@ -220,11 +240,17 @@ public class TelegramBotService extends TelegramLongPollingBot {
             } else if (isVideo) {
                 SendVideo msg = new SendVideo(); msg.setChatId(chatId); msg.setVideo(new InputFile(file)); if (caption != null) msg.setCaption(caption); execute(msg);
             } else if (isAudio) {
-                SendAudio msg = new SendAudio(); msg.setChatId(chatId); msg.setAudio(new InputFile(file)); if (caption != null) msg.setCaption(caption); execute(msg);
+                SendVoice msg = new SendVoice(); msg.setChatId(chatId); msg.setVoice(new InputFile(file)); if (caption != null) msg.setCaption(caption); execute(msg);
             } else {
                 SendDocument msg = new SendDocument(); msg.setChatId(chatId); msg.setDocument(new InputFile(file)); if (caption != null) msg.setCaption(caption); execute(msg);
             }
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            log.error("Erro ao enviar media física para o cliente Telegram: ", e);
+        }
+    }
+
+    public void sendMessageToClient(String chatId, String text) {
+        sendReply(Long.valueOf(chatId), text);
     }
 
     private static DefaultBotOptions configureUnsafeSSLAndGetOptions() {
@@ -244,9 +270,5 @@ public class TelegramBotService extends TelegramLongPollingBot {
             System.setProperty("com.sun.net.ssl.checkRevocation", "false");
         } catch (Exception e) {}
         return new DefaultBotOptions();
-    }
-
-    public void sendMessageToClient(String chatId, String text) {
-        sendReply(Long.valueOf(chatId), text);
     }
 }

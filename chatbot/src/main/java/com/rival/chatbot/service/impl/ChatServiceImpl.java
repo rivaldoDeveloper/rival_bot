@@ -31,7 +31,6 @@ import java.util.UUID;
 public class ChatServiceImpl implements ChatService {
 
     private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
-
     private final ChatMessageRepository repository;
     private final ChatMapper chatMapper;
     private final LocalVectorNlpService localVectorNlpService;
@@ -41,12 +40,11 @@ public class ChatServiceImpl implements ChatService {
     private final OwnGenerativeAiService ownGenerativeAiService;
     private final FlowEngineService flowEngineService;
     private final CustomerDataRepository customerDataRepository;
-
     private final WhatsAppSenderService whatsAppSenderService;
     private final WhatsAppAccountRepository whatsAppAccountRepository;
-
     private final MetaSenderService metaSenderService;
     private final MetaAccountRepository metaAccountRepository;
+    private final CloudinaryService cloudinaryService;
 
     public ChatServiceImpl(ChatMessageRepository repository, ChatMapper chatMapper,
                            LocalVectorNlpService localVectorNlpService, DataExtractorService dataExtractorService,
@@ -54,7 +52,8 @@ public class ChatServiceImpl implements ChatService {
                            OwnGenerativeAiService ownGenerativeAiService, FlowEngineService flowEngineService,
                            CustomerDataRepository customerDataRepository, WhatsAppSenderService whatsAppSenderService,
                            WhatsAppAccountRepository whatsAppAccountRepository,
-                           MetaSenderService metaSenderService, MetaAccountRepository metaAccountRepository) {
+                           MetaSenderService metaSenderService, MetaAccountRepository metaAccountRepository,
+                           CloudinaryService cloudinaryService) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.localVectorNlpService = localVectorNlpService;
@@ -68,6 +67,7 @@ public class ChatServiceImpl implements ChatService {
         this.whatsAppAccountRepository = whatsAppAccountRepository;
         this.metaSenderService = metaSenderService;
         this.metaAccountRepository = metaAccountRepository;
+        this.cloudinaryService = cloudinaryService;
     }
 
     @Override
@@ -109,7 +109,6 @@ public class ChatServiceImpl implements ChatService {
                 }
             }
         });
-
         return new ChatResponseDTO(request.message(), null, null, "AGENT", false, LocalDateTime.now());
     }
 
@@ -117,8 +116,11 @@ public class ChatServiceImpl implements ChatService {
     @Transactional
     public ChatResponseDTO processAgentMediaMessage(UUID sessionId, UUID tenantId, String message, MultipartFile file) {
         try {
-            File savedFile = saveFileToDisk(file.getBytes(), file.getOriginalFilename());
-            String fileUrl = "http://localhost:8080/uploads/" + savedFile.getName();
+            // Salva localmente para envio IMEDIATO para as APIs do WhatsApp/Telegram de forma segura
+            File localFile = saveFileToDisk(file.getBytes(), file.getOriginalFilename());
+
+            // Mas envia para a NUVEM para guardar no histórico sem sobrecarregar seu disco local no futuro
+            String fileUrl = cloudinaryService.uploadFile(file);
             String contentToSave = (message != null && !message.isBlank()) ? message + "\n" + fileUrl : fileUrl;
 
             saveBotResponse(sessionId, tenantId, contentToSave, "AGENT");
@@ -126,31 +128,30 @@ public class ChatServiceImpl implements ChatService {
             customerDataRepository.findBySessionId(sessionId).ifPresent(customer -> {
                 customer.setUpdatedAt(LocalDateTime.now());
                 customerDataRepository.save(customer);
+
                 String externalId = customer.getExternalId();
                 if (externalId != null && !externalId.isBlank()) {
                     if ("WHATSAPP".equals(customer.getChannel())) {
                         whatsAppAccountRepository.findAll().stream()
                                 .filter(acc -> acc.getTenantId().equals(tenantId)).findFirst()
-                                .ifPresent(acc -> whatsAppSenderService.sendMediaMessage(acc.getInstanceName(), acc.getEvolutionApiKey(), externalId, message, savedFile));
+                                .ifPresent(acc -> whatsAppSenderService.sendMediaMessage(acc.getInstanceName(), acc.getEvolutionApiKey(), externalId, message, localFile));
                     } else if ("TELEGRAM".equals(customer.getChannel())) {
                         TelegramBotService botToUse = findTelegramBotByCustomer(customer);
-                        if (botToUse != null) botToUse.sendMediaToClient(externalId, message, savedFile);
+                        if (botToUse != null) botToUse.sendMediaToClient(externalId, message, localFile);
                     } else if ("MESSENGER".equals(customer.getChannel()) || "INSTAGRAM".equals(customer.getChannel())) {
                         metaAccountRepository.findAll().stream()
                                 .filter(acc -> acc.getTenantId().equals(tenantId)).findFirst()
                                 .ifPresent(acc -> {
                                     String mimeType = "file";
                                     try {
-                                        String probe = Files.probeContentType(savedFile.toPath());
+                                        String probe = Files.probeContentType(localFile.toPath());
                                         if (probe != null) {
                                             if (probe.startsWith("image")) mimeType = "image";
                                             else if (probe.startsWith("video")) mimeType = "video";
                                             else if (probe.startsWith("audio")) mimeType = "audio";
                                         }
                                     } catch (IOException ignored) {}
-
                                     metaSenderService.sendMediaMessage(acc.getPageAccessToken(), externalId, mimeType, fileUrl);
-
                                     if (message != null && !message.isBlank()) {
                                         metaSenderService.sendMessage(acc.getPageAccessToken(), externalId, message);
                                     }
@@ -169,12 +170,14 @@ public class ChatServiceImpl implements ChatService {
     public ChatResponseDTO processImageFileMessage(UUID sessionId, UUID tenantId, String message, MultipartFile imageFile) {
         StringBuilder finalContentBuilder = new StringBuilder();
         if (message != null && !message.isBlank()) finalContentBuilder.append(message.trim()).append("\n");
+
         if (imageFile != null && !imageFile.isEmpty()) {
             try {
-                File savedFile = saveFileToDisk(imageFile.getBytes(), imageFile.getOriginalFilename());
-                finalContentBuilder.append("http://localhost:8080/uploads/").append(savedFile.getName());
+                String fileUrl = cloudinaryService.uploadFile(imageFile);
+                finalContentBuilder.append(fileUrl);
             } catch (Exception e) { log.error("Erro ao processar imagem", e); }
         }
+
         String finalContent = finalContentBuilder.toString().trim();
         return handleStandardChat(sessionId, tenantId, finalContent.isBlank() ? "Imagem" : finalContent, "WHATSAPP", null);
     }
@@ -182,7 +185,11 @@ public class ChatServiceImpl implements ChatService {
     @Override
     @Transactional
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
-        return handleStandardChat(sessionId, tenantId, "http://localhost:8080/uploads/" + audioFile.getName(), "WHATSAPP", null);
+        String fileUrl = "";
+        if (audioFile != null && audioFile.exists()) {
+            fileUrl = cloudinaryService.uploadFile(audioFile);
+        }
+        return handleStandardChat(sessionId, tenantId, fileUrl, "WHATSAPP", null);
     }
 
     private ChatResponseDTO handleStandardChat(UUID sessionId, UUID tenantId, String userTextContent, String channel, String externalId) {
@@ -206,13 +213,14 @@ public class ChatServiceImpl implements ChatService {
     private ChatResponseDTO handleVisualFlowChat(UUID sessionId, UUID tenantId, String userTextContent, String channel, String externalId) {
         saveUserMessage(sessionId, tenantId, userTextContent);
 
-        // Grava o contexto ANTES do Flow Engine rodar para não corromper o Node
         dataExtractorService.extractAndSave(sessionId, tenantId, userTextContent, channel, externalId);
 
         CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId).orElse(null);
+
         if (customer != null && customer.getIsAiActive() != null && !customer.getIsAiActive()) {
             return new ChatResponseDTO("", null, null, "BOT", false, LocalDateTime.now());
         }
+
         if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
 
         ChatResponseDTO flowResponse = flowEngineService.processFlow(sessionId, tenantId, userTextContent, channel);
@@ -222,37 +230,29 @@ public class ChatServiceImpl implements ChatService {
 
             if (flowResponse.requiresHumanHandoff()) {
                 if (customer != null) {
-                    customer.setIsAiActive(false); // BLOQUEIA A IA!
+                    customer.setIsAiActive(false);
                     customerDataRepository.save(customer);
                 }
-
                 String handoffMsg = "A transferir para um assistente humano...";
                 if (rawResponse.isBlank()) {
                     rawResponse = "TEXT:" + handoffMsg;
                 } else if (!rawResponse.contains(handoffMsg)) {
                     rawResponse += "|||TEXT:" + handoffMsg;
                 }
-
                 flowResponse = new ChatResponseDTO(rawResponse, flowResponse.imageUrl(), flowResponse.audioUrl(), "BOT", true, flowResponse.timestamp());
             }
 
-            String dbText = rawResponse;
-            if (rawResponse.contains("TEXT:") || rawResponse.contains("AUDIO:") || rawResponse.contains("VIDEO:")) {
-                dbText = rawResponse.replace("TEXT:", "")
-                        .replace("AUDIO:", "\n(Áudio Anexado) ")
-                        .replace("VIDEO:", "\n(Vídeo Anexado) ")
-                        .replace("|||", "\n");
-            }
-            saveBotResponse(sessionId, tenantId, dbText.trim(), "BOT");
-
+            saveBotResponse(sessionId, tenantId, rawResponse, "BOT");
             return flowResponse;
         }
 
         log.info("Flow Engine cedeu o comando à NLP/IA. Processando a mensagem: '{}'", userTextContent);
+
         String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
         String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
 
         saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
+
         return checkAudioCommandAndReturn(finalResponse);
     }
 
@@ -296,10 +296,10 @@ public class ChatServiceImpl implements ChatService {
     private ChatResponseDTO checkAudioCommandAndReturn(String finalResponse) {
         String textResponse = finalResponse;
         String audioUrl = null;
+
         if (finalResponse != null && finalResponse.startsWith("AUDIO:")) {
             audioUrl = finalResponse.substring(6).trim();
             textResponse = "";
-            log.info("Comando de áudio detetado: {}", audioUrl);
         }
         return new ChatResponseDTO(textResponse, null, audioUrl, "BOT", false, LocalDateTime.now());
     }
@@ -307,11 +307,13 @@ public class ChatServiceImpl implements ChatService {
     private File saveFileToDisk(byte[] bytes, String originalFilename) throws IOException {
         File dir = new File("./uploads/");
         if (!dir.exists()) dir.mkdirs();
+
         String safeName = "media.bin";
         if (originalFilename != null) {
             safeName = java.text.Normalizer.normalize(originalFilename, java.text.Normalizer.Form.NFD)
                     .replaceAll("[^\\p{ASCII}]", "").replaceAll("\\s+", "_").toLowerCase();
         }
+
         File serverFile = new File(dir, UUID.randomUUID().toString().substring(0, 8) + "_" + safeName);
         try (FileOutputStream fos = new FileOutputStream(serverFile)) { fos.write(bytes); }
         return serverFile;
