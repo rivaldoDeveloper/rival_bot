@@ -7,6 +7,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
@@ -30,15 +31,19 @@ public class WhatsAppSenderService {
         this.restTemplate = new RestTemplate();
     }
 
+    @Async("taskExecutor")
     public void sendMessage(String instanceName, String apikey, String toPhoneNumber, String messageText) {
         if (messageText == null || messageText.isBlank()) return;
         String url = evolutionApiUrl + "/message/sendText/" + instanceName;
+
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("apikey", apikey);
+
         Map<String, Object> body = new HashMap<>();
         body.put("number", toPhoneNumber);
         body.put("text", messageText);
+
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
         try {
             ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
@@ -50,7 +55,7 @@ public class WhatsAppSenderService {
         }
     }
 
-    // NOVO MÉTODO: Permite enviar Mídia diretamente pelo URL da Nuvem (Cloudinary)
+    @Async("taskExecutor")
     public void sendMediaMessageFromUrl(String instanceName, String apikey, String toPhoneNumber, String caption, String urlStr, String mimeType) {
         try {
             boolean isAudio = mimeType != null && (mimeType.startsWith("audio") || urlStr.endsWith(".ogg") || urlStr.endsWith(".mp3") || urlStr.endsWith(".webm"));
@@ -63,6 +68,7 @@ public class WhatsAppSenderService {
             body.put("number", toPhoneNumber);
 
             String endpoint;
+
             if (isAudio) {
                 endpoint = evolutionApiUrl + "/message/sendWhatsAppAudio/" + instanceName;
                 body.put("audio", urlStr);
@@ -90,7 +96,7 @@ public class WhatsAppSenderService {
         }
     }
 
-    // MÉTODO ATUALIZADO: Usado quando o ficheiro está no disco local
+    @Async("taskExecutor")
     public void sendMediaMessage(String instanceName, String apikey, String toPhoneNumber, String caption, File file) {
         try {
             String fileName = file.getName().toLowerCase();

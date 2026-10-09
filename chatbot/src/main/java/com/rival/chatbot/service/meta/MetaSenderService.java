@@ -6,6 +6,7 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -19,6 +20,7 @@ public class MetaSenderService {
     private final RestTemplate restTemplate = new RestTemplate();
     private static final String META_API_URL = "https://graph.facebook.com/v19.0/me/messages";
 
+    @Async("taskExecutor")
     public void sendMessage(String pageAccessToken, String recipientId, String text) {
         if (text == null || text.isBlank()) return;
 
@@ -27,6 +29,7 @@ public class MetaSenderService {
         sendToMeta(pageAccessToken, recipientId, messageData);
     }
 
+    @Async("taskExecutor")
     public void sendMediaMessage(String pageAccessToken, String recipientId, String mediaType, String mediaUrl) {
         if (mediaUrl == null || mediaUrl.isBlank()) return;
 

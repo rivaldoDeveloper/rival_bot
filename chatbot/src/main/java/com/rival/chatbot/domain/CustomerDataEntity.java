@@ -8,10 +8,11 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "customer_data", indexes = {
-        @Index(name = "idx_customer_session", columnList = "sessionId")
+        @Index(name = "idx_customer_session", columnList = "sessionId"),
+        @Index(name = "idx_customer_tenant_updated", columnList = "tenantId, updatedAt DESC"),
+        @Index(name = "idx_customer_channel_ext", columnList = "channel, externalId")
 })
 public class CustomerDataEntity {
-
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
@@ -35,11 +36,9 @@ public class CustomerDataEntity {
     @Column(name = "current_node_id")
     private String currentNodeId;
 
-    //NOVO CAMPO: Identifica a plataforma do cliente (TELEGRAM ou WHATSAPP)
     @Column(length = 20)
     private String channel;
 
-    // NOVO CAMPO: Guarda o ID do Telegram ou Número do WhatsApp
     @Column(name = "external_id")
     private String externalId;
 
@@ -63,49 +62,34 @@ public class CustomerDataEntity {
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
-
     public UUID getSessionId() { return sessionId; }
     public void setSessionId(UUID sessionId) { this.sessionId = sessionId; }
-
     public UUID getTenantId() { return tenantId; }
     public void setTenantId(UUID tenantId) { this.tenantId = tenantId; }
-
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
-
     public String getCpf() { return cpf; }
     public void setCpf(String cpf) { this.cpf = cpf; }
-
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
-
     public String getAddress() { return address; }
     public void setAddress(String address) { this.address = address; }
-
     public String getNeighborhood() { return neighborhood; }
     public void setNeighborhood(String neighborhood) { this.neighborhood = neighborhood; }
-
     public String getCity() { return city; }
     public void setCity(String city) { this.city = city; }
-
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
-
     public String getCurrentNodeId() { return currentNodeId; }
     public void setCurrentNodeId(String currentNodeId) { this.currentNodeId = currentNodeId; }
-
     public Integer getUnreadCount() { return unreadCount; }
     public void setUnreadCount(Integer unreadCount) { this.unreadCount = unreadCount; }
-
     public String getChannel() { return channel; }
     public void setChannel(String channel) { this.channel = channel; }
-
     public String getExternalId() { return externalId; }
     public void setExternalId(String externalId) { this.externalId = externalId; }
-
     public Boolean getIsAiActive() { return isAiActive; }
     public void setIsAiActive(Boolean isAiActive) { this.isAiActive = isAiActive; }
-
     public Map<String, String> getCustomData() { return customData; }
     public void setCustomData(Map<String, String> customData) { this.customData = customData; }
 }

@@ -9,6 +9,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
@@ -31,14 +32,18 @@ public class ChatHistoryController {
     }
 
     @GetMapping("/{sessionId}")
+    @Transactional
     public ResponseEntity<Page<ChatMessageEntity>> getHistoryBySessionId(
             @PathVariable UUID sessionId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
 
+        // Se resetea el contador únicamente si existen mensajes no leídos
         customerDataRepository.findBySessionId(sessionId).ifPresent(customer -> {
-            customer.setUnreadCount(0);
-            customerDataRepository.save(customer);
+            if (customer.getUnreadCount() != null && customer.getUnreadCount() > 0) {
+                customer.setUnreadCount(0);
+                customerDataRepository.save(customer);
+            }
         });
 
         Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
@@ -48,6 +53,7 @@ public class ChatHistoryController {
     }
 
     @GetMapping("/sessions")
+    @Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> getActiveSessions() {
         List<CustomerDataEntity> customers = customerDataRepository.findAll();
         List<ChatMessageEntity> latestMessages = chatMessageRepository.findLatestMessagesPerSession();
