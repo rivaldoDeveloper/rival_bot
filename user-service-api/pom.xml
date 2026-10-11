@@ -46,6 +46,13 @@
 			<artifactId>spring-boot-starter-validation</artifactId>
 		</dependency>
 
+		<!-- Swagger / OpenAPI para Spring Boot 3 -->
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>2.6.0</version>
+		</dependency>
+
 		<!-- Testes -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -71,7 +78,6 @@
 		</plugins>
 	</build>
 
-	<!-- ESTA É A PEÇA QUE FALTAVA PARA A VERSÃO 3.5.16 FUNCIONAR! -->
 	<repositories>
 		<repository>
 			<id>spring-milestones</id>
