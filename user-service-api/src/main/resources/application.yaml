@@ -1,0 +1,25 @@
+server:
+  port: 8081 # Porta dedicada ao Microsserviço de Utilizadores/Tenants
+
+spring:
+  application:
+    name: user-service-api
+
+  # Conexão à base de dados NeonDB (Partilhada ou Banco Isolado)
+  datasource:
+    url: ${JDBC_POSTGRES:jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require}
+    username: ${NEON_DB_USER:neondb_owner}
+    password: ${NEON_DB_PASSWORD:npg_lZhcVq9WadG0}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      max-lifetime: 240000 # 4 minutos (menor que o limite do NeonDB)
+      keepalive-time: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.PostgreSQLDialect
