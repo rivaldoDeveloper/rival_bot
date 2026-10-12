@@ -4,8 +4,8 @@ server:
 spring:
   application:
     name: auth-service-api
-  datasource:
-    url: ${JDBC_POSTGRES:jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require}
-    username: ${NEON_DB_USER:neondb_owner}
-    password: ${NEON_DB_PASSWORD:npg_lZhcVq9WadG0}
-    driver-class-name: org.postgresql.Driver
+
+# Configurações Profissionais do nosso JWT
+jwt:
+  secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
+  expiration: 86400000
