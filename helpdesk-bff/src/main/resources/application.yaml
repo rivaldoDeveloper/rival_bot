@@ -1,0 +1,6 @@
+server:
+  port: 8084 # Porta exclusiva do BFF
+
+spring:
+  application:
+    name: helpdesk-bff
