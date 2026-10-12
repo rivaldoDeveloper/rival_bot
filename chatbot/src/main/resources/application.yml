@@ -39,6 +39,8 @@
 #    username: rival_atendimento_bot
 #    token: ${TELEGRAM_BOT_TOKEN}
 
+server:
+  port: 8083
 spring:
   application:
     name: chatbot-api
