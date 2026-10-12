@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/dashboard") // O caminho completo será /api/bff/dashboard
+@RequestMapping("/dashboard")
 public class DashboardController {
 
     private final UserClient userClient;
@@ -23,18 +23,13 @@ public class DashboardController {
         this.chatbotClient = chatbotClient;
     }
 
+    // O Frontend chama ISTO UMA ÚNICA VEZ e recebe tudo que precisa para desenhar o ecrã inicial!
     @GetMapping("/summary/{userId}")
     public ResponseEntity<DashboardResponseDTO> getDashboardSummary(@PathVariable UUID userId) {
-
-        // 1. O BFF vai até a cozinha do User Service pegar os dados do operador
         Object user = userClient.getUserById(userId);
-
-        // 2. O BFF vai até a cozinha do Chatbot pegar a fila de mensagens
         Object sessions = chatbotClient.getActiveSessions();
 
-        // 3. O BFF junta tudo na mesma bandeja (DTO) e entrega ao Angular
         DashboardResponseDTO response = new DashboardResponseDTO(user, sessions);
-
         return ResponseEntity.ok(response);
     }
 }
