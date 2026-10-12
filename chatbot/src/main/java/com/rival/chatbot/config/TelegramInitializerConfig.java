@@ -51,8 +51,9 @@ public class TelegramInitializerConfig {
                     ACTIVE_BOTS.put(config.getBotUsername(), newBotInstance);
                     log.info("Telegram Bot [@{}] inicializado e a escutar!", config.getBotUsername());
                 }
-            } catch (TelegramApiException e) {
-                log.error("Erro ao iniciar o Bot: {}", config.getBotUsername(), e);
+            } catch (Exception e) {
+                // Capturamos qualquer erro genérico da API do Telegram e mostramos apenas uma linha limpa de aviso
+                log.warn("Ignorando Bot [@{}]: O token parece ser inválido ou a API do Telegram recusou a conexão.", config.getBotUsername());
             }
         }
 

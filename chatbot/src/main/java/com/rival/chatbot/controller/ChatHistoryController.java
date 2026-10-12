@@ -4,6 +4,8 @@ import com.rival.chatbot.domain.ChatMessageEntity;
 import com.rival.chatbot.domain.CustomerDataEntity;
 import com.rival.chatbot.repository.ChatMessageRepository;
 import com.rival.chatbot.repository.CustomerDataRepository;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -21,6 +23,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/chat/history")
+@Tag(name = "Chat History", description = "Endpoints para consulta do historico de conversas")
 public class ChatHistoryController {
 
     private final ChatMessageRepository chatMessageRepository;
@@ -31,6 +34,7 @@ public class ChatHistoryController {
         this.customerDataRepository = customerDataRepository;
     }
 
+    @Operation(summary = "Historico da Sessao", description = "Recupera todas as mensagens de uma sessao especifica com paginacao.")
     @GetMapping("/{sessionId}")
     @Transactional
     public ResponseEntity<Page<ChatMessageEntity>> getHistoryBySessionId(
@@ -52,6 +56,7 @@ public class ChatHistoryController {
         return ResponseEntity.ok(messages);
     }
 
+    @Operation(summary = "Sessoes Ativas", description = "Lista todas as sessoes ativas com o resumo da ultima mensagem.")
     @GetMapping("/sessions")
     @Transactional(readOnly = true)
     public ResponseEntity<List<Map<String, Object>>> getActiveSessions() {
