@@ -50,4 +50,11 @@ public class UserService {
         return userRepository.findByTenantId(tenantId, pageable)
                 .map(u -> new UserResponseDTO(u.getId(), u.getName(), u.getEmail(), u.isActive()));
     }
+
+    // Valida se a senha enviada em texto limpo corresponde à senha encriptada (BCrypt) na base de dados
+    public boolean validatePassword(String email, String rawPassword) {
+        return userRepository.findByEmail(email)
+                .map(user -> passwordEncoder.matches(rawPassword, user.getPassword()))
+                .orElse(false);
+    }
 }
