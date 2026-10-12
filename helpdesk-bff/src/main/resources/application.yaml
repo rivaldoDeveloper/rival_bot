@@ -1,6 +1,14 @@
 server:
-  port: 8084 # Porta exclusiva do BFF
+  port: 8084
+  servlet:
+    context-path: /api/bff
 
 spring:
   application:
     name: helpdesk-bff
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            loggerLevel: FULL # Mostra nos logs os detalhes das chamadas internas (ótimo para debug)
