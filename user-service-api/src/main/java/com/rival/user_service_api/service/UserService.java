@@ -57,4 +57,10 @@ public class UserService {
                 .map(user -> passwordEncoder.matches(rawPassword, user.getPassword()))
                 .orElse(false);
     }
+
+    public UserResponseDTO getUserById(UUID userId) {
+        return userRepository.findById(userId)
+                .map(u -> new UserResponseDTO(u.getId(), u.getName(), u.getEmail(), u.isActive()))
+                .orElseThrow(() -> new RuntimeException("Utilizador não encontrado."));
+    }
 }

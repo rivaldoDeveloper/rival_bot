@@ -49,4 +49,12 @@ public class UserController {
 
         return ResponseEntity.ok(userService.getUsersByTenant(tenantId, pageable));
     }
+
+    @Operation(summary = "Buscar Utilizador por ID", description = "Retorna os detalhes de um utilizador específico.")
+    @ApiResponse(responseCode = "200", description = "Utilizador encontrado")
+    @GetMapping("/{id}")
+    public ResponseEntity<UserResponseDTO> findById(@PathVariable UUID id) {
+        // Precisamos criar este método no UserService também!
+        return ResponseEntity.ok(userService.getUserById(id));
+    }
 }
