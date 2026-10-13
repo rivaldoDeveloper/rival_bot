@@ -9,11 +9,13 @@ import java.util.function.Predicate;
 @Component
 public class RouteValidator {
 
-    // Lista de rotas públicas (que não precisam de token)
     public static final List<String> openApiEndpoints = List.of(
             "/api/auth/login",
             "/v3/api-docs",
-            "/swagger-ui"
+            "/swagger-ui",
+            "/api/v1/meta/webhook",
+            "/api/v1/whatsapp/webhook",
+            "/ws-chat" // Libera o handshake inicial do WebSocket STOMP/SockJS
     );
 
     public Predicate<ServerHttpRequest> isSecured =

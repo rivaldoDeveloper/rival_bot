@@ -1,5 +1,8 @@
 server:
-  port: 8080 # A porta única que o seu Frontend vai chamar
+  port: 8080
+
+jwt:
+  secret: "sua_chave_secreta_super_segura_com_pelo_menos_32_caracteres_aqui"
 
 spring:
   application:
@@ -7,38 +10,44 @@ spring:
   cloud:
     gateway:
       globalcors:
-        cors-configurations:
+        corsConfigurations:
           '[/**]':
-            allowedOrigins: "http://localhost:4200" # Libera o Angular
-            allowedMethods: "*"
+            allowedOrigins: "http://localhost:4200"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
             allowedHeaders: "*"
+            allowCredentials: true
       routes:
+        # 1. Rota de WebSocket para o Chatbot API (ws://)
+        - id: chatbot-websocket
+          uri: ws://localhost:8083
+          predicates:
+            - Path=/ws-chat/**
+
+        # 2. Rota de Autenticacao (User Service)
         - id: auth-service
-          uri: http://localhost:8082
+          uri: http://localhost:8081
           predicates:
             - Path=/api/auth/**
 
+        # 3. Rota CRUD de Tenants e Users
         - id: user-service
           uri: http://localhost:8081
           predicates:
-            - Path=/api/users/**, /api/tenants/**
-          filters:
-            - AuthenticationFilter # ATIVAMOS A SEGURANÇA AQUI!
+            - Path=/api/tenants/**
 
+        # 4. Rota do Chatbot API (REST)
         - id: chatbot-api
           uri: http://localhost:8083
           predicates:
-            - Path=/api/v1/chat/**, /api/v1/flow/**
-          filters:
-            - AuthenticationFilter # ATIVAMOS A SEGURANÇA AQUI!
+            - Path=/api/v1/**
 
+        # 5. Rota do Helpdesk BFF
         - id: helpdesk-bff
           uri: http://localhost:8084
           predicates:
             - Path=/api/bff/**
-          filters:
-            - AuthenticationFilter
-
-# IMPORTANTE: A chave tem de ser adicionada aqui na raiz do ficheiro YAML!
-jwt:
-  secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
