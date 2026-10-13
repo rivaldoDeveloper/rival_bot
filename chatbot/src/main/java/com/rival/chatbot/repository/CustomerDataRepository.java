@@ -13,12 +13,14 @@ import java.util.UUID;
 
 @Repository
 public interface CustomerDataRepository extends JpaRepository<CustomerDataEntity, UUID> {
+
     Optional<CustomerDataEntity> findBySessionId(UUID sessionId);
 
-    // NOVO: Query para filtrar clientes paginados pelo nome, telemóvel/ID ou canal
+    // Consulta resiliente: Se :search for nulo ou vazio, ignora o filtro e traz todos os registos sem erro 500
     @Query("SELECT c FROM CustomerDataEntity c WHERE " +
+            "(:search IS NULL OR :search = '' OR " +
             "LOWER(COALESCE(c.name, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
             "LOWER(COALESCE(c.externalId, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
-            "LOWER(COALESCE(c.channel, '')) LIKE LOWER(CONCAT('%', :search, '%'))")
+            "LOWER(COALESCE(c.channel, '')) LIKE LOWER(CONCAT('%', :search, '%')))")
     Page<CustomerDataEntity> searchCustomers(@Param("search") String search, Pageable pageable);
 }
