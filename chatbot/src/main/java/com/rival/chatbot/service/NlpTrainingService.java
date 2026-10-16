@@ -29,10 +29,12 @@ public class NlpTrainingService {
     @Transactional
     public NlpIntentEntity createIntent(UUID tenantId, NlpIntentDTO dto) {
         // Fallback seguro de Tenant ID para evitar erros de restrição nula durante testes locais
-        UUID activeTenantId = tenantId != null ? tenantId : UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d480");
+        if (tenantId == null) {
+            throw new IllegalArgumentException("O identificador do Tenant (X-Tenant-Id) é obrigatório.");
+        }
 
         // Busca por nome no repositório restrito ao Tenant
-        List<NlpIntentEntity> existingIntents = repository.findByTenantIdAndNameIgnoreCase(activeTenantId, dto.name());
+        List<NlpIntentEntity> existingIntents = repository.findByTenantIdAndNameIgnoreCase(tenantId, dto.name());
         if (existingIntents != null && !existingIntents.isEmpty()) {
             throw new IllegalArgumentException("A intenção '" + dto.name() + "' já está cadastrada para sua conta.");
         }
@@ -46,7 +48,7 @@ public class NlpTrainingService {
         }
 
         NlpIntentEntity entity = new NlpIntentEntity();
-        entity.setTenantId(activeTenantId);
+        entity.setTenantId(tenantId);
         entity.setName(dto.name().trim());
         entity.setLanguage(cleanLang);
         entity.setKeywords(dto.keywords() != null ? new ArrayList<>(dto.keywords()) : new ArrayList<>());
@@ -59,10 +61,12 @@ public class NlpTrainingService {
 
     @Transactional
     public Optional<NlpIntentEntity> updateIntent(UUID tenantId, UUID id, NlpIntentDTO dto) {
-        UUID activeTenantId = tenantId != null ? tenantId : UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d480");
+        if (tenantId == null) {
+            throw new IllegalArgumentException("O identificador do Tenant (X-Tenant-Id) é obrigatório.");
+        }
 
         return repository.findById(id).map(entity -> {
-            if (entity.getTenantId() != null && !entity.getTenantId().equals(activeTenantId)) {
+            if (entity.getTenantId() != null && !entity.getTenantId().equals(tenantId)) {
                 throw new IllegalArgumentException("Acesso negado: esta intenção pertence a outro Tenant.");
             }
 
