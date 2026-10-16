@@ -13,18 +13,20 @@ public class FeignTokenInterceptor implements RequestInterceptor {
 
     @Override
     public void apply(RequestTemplate template) {
-        // Apanha o contexto do pedido HTTP atual (o que veio do Angular)
         ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-
         if (attributes != null) {
             HttpServletRequest request = attributes.getRequest();
 
-            // Lê o cabeçalho "Authorization" que tem o Token JWT
+            // Reenvia o Token JWT para os microsserviços
             String authorizationHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
-
             if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
-                // Injeta automaticamente o mesmo Token no pedido Feign que vai para os outros microsserviços
                 template.header(HttpHeaders.AUTHORIZATION, authorizationHeader);
+            }
+
+            // Reenvia o Tenant ID do utilizador logado para isolamento de dados
+            String tenantIdHeader = request.getHeader("X-Tenant-Id");
+            if (tenantIdHeader != null && !tenantIdHeader.isBlank()) {
+                template.header("X-Tenant-Id", tenantIdHeader);
             }
         }
     }
