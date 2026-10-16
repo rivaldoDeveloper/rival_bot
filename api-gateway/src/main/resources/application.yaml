@@ -2,7 +2,7 @@ server:
   port: 8080
 
 jwt:
-  secret: "sua_chave_secreta_super_segura_com_pelo_menos_32_caracteres_aqui"
+  secret: "ChaveSecretaSuperSeguraComMaisDe32CaracteresRivalChat2026!"
 
 spring:
   application:
@@ -22,31 +22,26 @@ spring:
             allowedHeaders: "*"
             allowCredentials: true
       routes:
-        # 1. Rota de WebSocket para o Chatbot API (ws://)
         - id: chatbot-websocket
           uri: ws://localhost:8083
           predicates:
             - Path=/ws-chat/**
 
-        # 2. Rota de Autenticacao (User Service)
         - id: auth-service
           uri: http://localhost:8081
           predicates:
             - Path=/api/auth/**
 
-        # 3. Rota CRUD de Tenants e Users
         - id: user-service
           uri: http://localhost:8081
           predicates:
             - Path=/api/tenants/**
 
-        # 4. Rota do Chatbot API (REST)
         - id: chatbot-api
           uri: http://localhost:8083
           predicates:
             - Path=/api/v1/**
 
-        # 5. Rota do Helpdesk BFF
         - id: helpdesk-bff
           uri: http://localhost:8084
           predicates:

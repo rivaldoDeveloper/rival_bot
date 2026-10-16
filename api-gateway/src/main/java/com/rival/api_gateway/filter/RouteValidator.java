@@ -10,12 +10,17 @@ import java.util.function.Predicate;
 public class RouteValidator {
 
     public static final List<String> openApiEndpoints = List.of(
-            "/api/auth/login",
+            "/api/auth/",
+            "/api/v1/auth/",
+            "/api/v1/chat/send-flow",
+            "/api/v1/chat/send",
+            "/api/v1/chat/history",
+            "/api/v1/files/upload",
             "/v3/api-docs",
             "/swagger-ui",
             "/api/v1/meta/webhook",
             "/api/v1/whatsapp/webhook",
-            "/ws-chat" // Libera o handshake inicial do WebSocket STOMP/SockJS
+            "/ws-chat"
     );
 
     public Predicate<ServerHttpRequest> isSecured =
