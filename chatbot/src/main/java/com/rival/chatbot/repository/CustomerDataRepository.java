@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -16,11 +17,25 @@ public interface CustomerDataRepository extends JpaRepository<CustomerDataEntity
 
     Optional<CustomerDataEntity> findBySessionId(UUID sessionId);
 
-    // Consulta resiliente: Se :search for nulo ou vazio, ignora o filtro e traz todos os registos sem erro 500
+    Optional<CustomerDataEntity> findBySessionIdAndTenantId(UUID sessionId, UUID tenantId);
+
+    /* ========================================================================
+     * MUDANÇA MULTI-TENANCY:
+     * Busca todas as conversas/clientes ativos pertencentes a um único Tenant.
+     * ======================================================================== */
+    List<CustomerDataEntity> findByTenantId(UUID tenantId);
+
     @Query("SELECT c FROM CustomerDataEntity c WHERE " +
             "(:search IS NULL OR :search = '' OR " +
             "LOWER(COALESCE(c.name, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
             "LOWER(COALESCE(c.externalId, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
             "LOWER(COALESCE(c.channel, '')) LIKE LOWER(CONCAT('%', :search, '%')))")
     Page<CustomerDataEntity> searchCustomers(@Param("search") String search, Pageable pageable);
+
+    @Query("SELECT c FROM CustomerDataEntity c WHERE c.tenantId = :tenantId AND " +
+            "(:search IS NULL OR :search = '' OR " +
+            "LOWER(COALESCE(c.name, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+            "LOWER(COALESCE(c.externalId, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
+            "LOWER(COALESCE(c.channel, '')) LIKE LOWER(CONCAT('%', :search, '%')))")
+    Page<CustomerDataEntity> searchCustomersByTenant(@Param("tenantId") UUID tenantId, @Param("search") String search, Pageable pageable);
 }

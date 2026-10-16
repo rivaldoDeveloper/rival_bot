@@ -24,14 +24,33 @@ public class TelegramBotConfigController {
 
     @Operation(summary = "Salvar Configuracao do Bot", description = "Adiciona um novo bot ou atualiza o Token HTTP API gerado pelo BotFather.")
     @PostMapping
-    public ResponseEntity<TelegramBotConfigEntity> registerOrUpdateBot(@RequestBody TelegramBotConfigEntity botConfig) {
+    public ResponseEntity<TelegramBotConfigEntity> registerOrUpdateBot(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId,
+            @RequestBody TelegramBotConfigEntity botConfig) {
+
+        /* ========================================================================
+         * MUDANÇA MULTI-TENANCY:
+         * Garante que o bot seja criado apontando para o tenantId real do header.
+         * ======================================================================== */
+        if (tenantId != null) {
+            botConfig.setTenantId(tenantId);
+        }
         TelegramBotConfigEntity saved = service.saveOrUpdateBot(botConfig);
         return ResponseEntity.status(HttpStatus.OK).body(saved);
     }
 
+    /* ========================================================================
+     * MUDANÇA MULTI-TENANCY:
+     * Filtra a listagem de Bots por Tenant.
+     * ======================================================================== */
     @Operation(summary = "Listar Bots do Telegram", description = "Recupera todas as configuracoes de bots de Telegram vinculadas aos tenants.")
     @GetMapping
-    public ResponseEntity<List<TelegramBotConfigEntity>> listBots() {
+    public ResponseEntity<List<TelegramBotConfigEntity>> listBots(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId) {
+
+        if (tenantId != null) {
+            return ResponseEntity.ok(service.getBotsByTenant(tenantId));
+        }
         return ResponseEntity.ok(service.getAllBots());
     }
 

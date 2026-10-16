@@ -42,27 +42,34 @@ public class ChatHistoryController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size) {
 
-        // Se resetea el contador únicamente si existen mensajes no leídos
         customerDataRepository.findBySessionId(sessionId).ifPresent(customer -> {
             if (customer.getUnreadCount() != null && customer.getUnreadCount() > 0) {
                 customer.setUnreadCount(0);
                 customerDataRepository.save(customer);
             }
         });
-
         Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
         Page<ChatMessageEntity> messages = chatMessageRepository.findBySessionId(sessionId, pageable);
-
         return ResponseEntity.ok(messages);
     }
 
-    @Operation(summary = "Sessoes Ativas", description = "Lista todas as sessoes ativas com o resumo da ultima mensagem.")
+    /* ========================================================================
+     * MUDANÇA MULTI-TENANCY:
+     * Recebe o X-Tenant-Id enviado pelo API Gateway / Interceptor e filtra
+     * apenas as sessões do utilizador logado no Live Chat.
+     * ======================================================================== */
+    @Operation(summary = "Sessoes Ativas", description = "Lista todas as sessoes ativas filtradas por tenant.")
     @GetMapping("/sessions")
     @Transactional(readOnly = true)
-    public ResponseEntity<List<Map<String, Object>>> getActiveSessions() {
-        List<CustomerDataEntity> customers = customerDataRepository.findAll();
-        List<ChatMessageEntity> latestMessages = chatMessageRepository.findLatestMessagesPerSession();
+    public ResponseEntity<List<Map<String, Object>>> getActiveSessions(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId) {
 
+        // Se o tenantId for enviado no header, filtra os clientes por tenant, caso contrário busca todos
+        List<CustomerDataEntity> customers = (tenantId != null)
+                ? customerDataRepository.findByTenantId(tenantId)
+                : customerDataRepository.findAll();
+
+        List<ChatMessageEntity> latestMessages = chatMessageRepository.findLatestMessagesPerSession();
         Map<UUID, String> lastMessageMap = latestMessages.stream()
                 .collect(Collectors.toMap(
                         ChatMessageEntity::getSessionId,
@@ -71,20 +78,13 @@ public class ChatHistoryController {
                 ));
 
         List<Map<String, Object>> sessions = new ArrayList<>();
-
         for (CustomerDataEntity customer : customers) {
             String lastMsgText = lastMessageMap.getOrDefault(customer.getSessionId(), "Sessão iniciada");
-
-            // Pasamos el customer completo para poder usar updatedAt en la ordenación
             Map<String, Object> dto = getStringObjectMap(customer, lastMsgText);
-
-            // Añadimos temporalmente la fecha de actualización para usarla en el sort
             dto.put("_sortDate", customer.getUpdatedAt());
-
             sessions.add(dto);
         }
 
-        // ORDENAMIENTO: Ordena la lista de forma descendente (los más recientes primero)
         sessions.sort((s1, s2) -> {
             java.time.LocalDateTime date1 = (java.time.LocalDateTime) s1.get("_sortDate");
             java.time.LocalDateTime date2 = (java.time.LocalDateTime) s2.get("_sortDate");
@@ -94,9 +94,7 @@ public class ChatHistoryController {
             return date2.compareTo(date1);
         });
 
-        // Limpieza de la variable temporal usada para ordenar para no ensuciar el JSON de salida
         sessions.forEach(s -> s.remove("_sortDate"));
-
         return ResponseEntity.ok(sessions);
     }
 
@@ -104,10 +102,8 @@ public class ChatHistoryController {
         Map<String, Object> dto = new HashMap<>(10);
         dto.put("sessionId", customer.getSessionId());
         dto.put("tenantId", customer.getTenantId());
-
         String displayName = customer.getName();
 
-        // ✅ CORREÇÃO: Agora apagamos o nome de fora e mantemos apenas o que está dentro dos parênteses (o Bot)
         if (displayName != null && displayName.contains("(")) {
             int start = displayName.indexOf("(");
             int end = displayName.indexOf(")");
@@ -115,9 +111,7 @@ public class ChatHistoryController {
                 displayName = displayName.substring(start + 1, end).trim();
             }
         }
-
         String channel = customer.getChannel() != null ? customer.getChannel() : "WEB";
-
         if (displayName == null || displayName.isBlank()) {
             if ("WEB".equalsIgnoreCase(channel)) {
                 displayName = "Visitante Web " + customer.getSessionId().toString().substring(0, 4);
@@ -125,16 +119,12 @@ public class ChatHistoryController {
                 displayName = "Cliente " + customer.getSessionId().toString().substring(0, 5);
             }
         }
-
         dto.put("phoneNumber", displayName);
         dto.put("lastMessage", lastMsgText);
         dto.put("unread", customer.getUnreadCount() != null ? customer.getUnreadCount() : 0);
         dto.put("isAiActive", customer.getIsAiActive() != null ? customer.getIsAiActive() : true);
         dto.put("channel", channel);
-
-        // Renderiza os dados extraídos pelo Flow Engine para o Frontend
         dto.put("customData", customer.getCustomData());
-
         return dto;
     }
 }

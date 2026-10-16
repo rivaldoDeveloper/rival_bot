@@ -19,6 +19,9 @@ public class NlpIntentEntity {
     private UUID id;
 
     @Column(nullable = false)
+    private UUID tenantId;
+
+    @Column(nullable = false)
     private String name;
 
     @Column(nullable = false, length = 10)
@@ -46,6 +49,9 @@ public class NlpIntentEntity {
 
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
+
+    public UUID getTenantId() { return tenantId; }
+    public void setTenantId(UUID tenantId) { this.tenantId = tenantId; }
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }

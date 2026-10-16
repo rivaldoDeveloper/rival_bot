@@ -11,9 +11,11 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.UUID;
+
 @RestController
-@RequestMapping("/api/v1/crm/customers")
-@Tag(name = "CRM", description = "Endpoints de gestao dos clientes capturados pelo chatbot")
+@RequestMapping({"/api/v1/crm/customers", "/api/crm/customers"})
+@Tag(name = "CRM", description = "Endpoints de gestão dos clientes capturados pelo chatbot")
 public class CrmController {
 
     private final CustomerDataRepository repository;
@@ -22,19 +24,20 @@ public class CrmController {
         this.repository = repository;
     }
 
-    @Operation(summary = "Listar clientes", description = "Retorna a lista de clientes capturados, com suporte a paginacao e pesquisa por nome/canal/ID.")
+    @Operation(summary = "Listar clientes", description = "Retorna a lista de clientes capturados, com suporte a paginação e pesquisa por nome/canal/ID.")
     @GetMapping
     public ResponseEntity<Page<CustomerDataEntity>> getCustomers(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId,
             @RequestParam(defaultValue = "") String search,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "12") int size) {
 
-        // Ordenar pelos últimos clientes a interagirem
         Pageable pageable = PageRequest.of(page, size, Sort.by("updatedAt").descending());
 
-        if (search == null || search.isBlank()) {
-            return ResponseEntity.ok(repository.findAll(pageable));
+        if (tenantId != null) {
+            return ResponseEntity.ok(repository.searchCustomersByTenant(tenantId, search.trim(), pageable));
         }
+
         return ResponseEntity.ok(repository.searchCustomers(search.trim(), pageable));
     }
 }

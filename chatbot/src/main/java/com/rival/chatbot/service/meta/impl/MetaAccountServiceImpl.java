@@ -31,18 +31,23 @@ public class MetaAccountServiceImpl implements MetaAccountService {
                     }
                     return repository.save(existing);
                 })
-                .orElseGet(() -> {
-                    if (account.getTenantId() == null) {
-                        account.setTenantId(UUID.randomUUID());
-                    }
-                    return repository.save(account);
-                });
+                .orElseGet(() -> repository.save(account));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<MetaAccountEntity> getAllAccounts() {
         return repository.findAll();
+    }
+
+    /* ========================================================================
+     * MUDANÇA MULTI-TENANCY:
+     * Retorna apenas as contas do Tenant indicado.
+     * ======================================================================== */
+    @Override
+    @Transactional(readOnly = true)
+    public List<MetaAccountEntity> getAccountsByTenant(UUID tenantId) {
+        return repository.findByTenantId(tenantId);
     }
 
     @Override

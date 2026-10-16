@@ -27,34 +27,55 @@ public class NlpTrainingService {
     }
 
     @Transactional
-    public NlpIntentEntity createIntent(NlpIntentDTO dto) {
-        // Busca por nome no repositório
-        List<NlpIntentEntity> existingIntents = repository.findByNameIgnoreCase(dto.name());
+    public NlpIntentEntity createIntent(UUID tenantId, NlpIntentDTO dto) {
+        // Fallback seguro de Tenant ID para evitar erros de restrição nula durante testes locais
+        UUID activeTenantId = tenantId != null ? tenantId : UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d480");
 
-        // Se a intenção já existir, lança uma exceção para o Controller tratar
+        // Busca por nome no repositório restrito ao Tenant
+        List<NlpIntentEntity> existingIntents = repository.findByTenantIdAndNameIgnoreCase(activeTenantId, dto.name());
         if (existingIntents != null && !existingIntents.isEmpty()) {
-            throw new IllegalArgumentException("A intenção '" + dto.name() + "' já está cadastrada. Não é permitido salvar intenções duplicadas.");
+            throw new IllegalArgumentException("A intenção '" + dto.name() + "' já está cadastrada para sua conta.");
+        }
+
+        String cleanLang = dto.language();
+        if (cleanLang != null) {
+            cleanLang = cleanLang.split(" ")[0].split("-")[0].trim().toLowerCase();
+            if (cleanLang.length() > 10) cleanLang = cleanLang.substring(0, 10);
+        } else {
+            cleanLang = "pt";
         }
 
         NlpIntentEntity entity = new NlpIntentEntity();
-        entity.setName(dto.name());
-        entity.setLanguage(dto.language());
+        entity.setTenantId(activeTenantId);
+        entity.setName(dto.name().trim());
+        entity.setLanguage(cleanLang);
         entity.setKeywords(dto.keywords() != null ? new ArrayList<>(dto.keywords()) : new ArrayList<>());
         entity.setResponses(dto.responses() != null ? new ArrayList<>(dto.responses()) : new ArrayList<>());
 
         NlpIntentEntity saved = repository.save(entity);
-        localVectorNlpService.clearIntentsCache(); // Invalida o Cache
-
+        localVectorNlpService.clearIntentsCache();
         return saved;
     }
 
     @Transactional
-    public Optional<NlpIntentEntity> updateIntent(UUID id, NlpIntentDTO dto) {
-        return repository.findById(id).map(entity -> {
-            entity.setName(dto.name());
-            entity.setLanguage(dto.language());
+    public Optional<NlpIntentEntity> updateIntent(UUID tenantId, UUID id, NlpIntentDTO dto) {
+        UUID activeTenantId = tenantId != null ? tenantId : UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d480");
 
-            // Limpa as listas antigas e adiciona as novas
+        return repository.findById(id).map(entity -> {
+            if (entity.getTenantId() != null && !entity.getTenantId().equals(activeTenantId)) {
+                throw new IllegalArgumentException("Acesso negado: esta intenção pertence a outro Tenant.");
+            }
+
+            String cleanLang = dto.language();
+            if (cleanLang != null) {
+                cleanLang = cleanLang.split(" ")[0].split("-")[0].trim().toLowerCase();
+                if (cleanLang.length() > 10) cleanLang = cleanLang.substring(0, 10);
+            } else {
+                cleanLang = "pt";
+            }
+
+            entity.setName(dto.name().trim());
+            entity.setLanguage(cleanLang);
             entity.getKeywords().clear();
             if (dto.keywords() != null) entity.getKeywords().addAll(dto.keywords());
 
@@ -62,14 +83,17 @@ public class NlpTrainingService {
             if (dto.responses() != null) entity.getResponses().addAll(dto.responses());
 
             NlpIntentEntity saved = repository.save(entity);
-            localVectorNlpService.clearIntentsCache(); // Invalida o cache
+            localVectorNlpService.clearIntentsCache();
             return saved;
         });
     }
 
     @Transactional(readOnly = true)
-    public Page<NlpIntentEntity> listIntents(int page, int size) {
+    public Page<NlpIntentEntity> listIntents(UUID tenantId, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("name").ascending());
+        if (tenantId != null) {
+            return repository.findByTenantId(tenantId, pageable);
+        }
         return repository.findAll(pageable);
     }
 
@@ -83,8 +107,6 @@ public class NlpTrainingService {
 
             // 2. Agora deleta a intenção pai com segurança
             repository.delete(intent);
-
-            // 3. Limpa o cache do robô
             localVectorNlpService.clearIntentsCache();
         });
     }

@@ -16,7 +16,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/nlp/training")
-@Tag(name = "NLP Training", description = "Endpoints para o treinamento e gestão da rede neural local (Intenções e Respostas)")
+@Tag(name = "NLP Training", description = "Endpoints para o treinamento e gestão da rede neural local")
 public class NlpTrainingController {
 
     private final NlpTrainingService service;
@@ -25,11 +25,12 @@ public class NlpTrainingController {
         this.service = service;
     }
 
-    @Operation(summary = "Criar Intenção", description = "Injeta uma nova diretriz/intenção na base de conhecimento da IA.")
     @PostMapping("/intents")
-    public ResponseEntity<?> createIntent(@Valid @RequestBody NlpIntentDTO dto) {
+    public ResponseEntity<?> createIntent(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId,
+            @Valid @RequestBody NlpIntentDTO dto) {
         try {
-            NlpIntentEntity saved = service.createIntent(dto);
+            NlpIntentEntity saved = service.createIntent(tenantId, dto);
             return ResponseEntity.status(HttpStatus.CREATED).body(saved);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
@@ -40,26 +41,28 @@ public class NlpTrainingController {
         }
     }
 
-    @Operation(summary = "Atualizar Intenção", description = "Substitui os dados de uma intenção existente através do seu ID.")
     @PutMapping("/intents/{id}")
-    public ResponseEntity<?> updateIntent(@PathVariable UUID id, @Valid @RequestBody NlpIntentDTO dto) {
-        return service.updateIntent(id, dto)
+    public ResponseEntity<?> updateIntent(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId,
+            @PathVariable UUID id,
+            @Valid @RequestBody NlpIntentDTO dto) {
+        return service.updateIntent(tenantId, id, dto)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @Operation(summary = "Listar Intenções", description = "Retorna a memória ativa da IA (lista de intenções) com paginação.")
     @GetMapping("/intents")
     public ResponseEntity<Page<NlpIntentEntity>> listIntents(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
-
-        return ResponseEntity.ok(service.listIntents(page, size));
+        return ResponseEntity.ok(service.listIntents(tenantId, page, size));
     }
 
-    @Operation(summary = "Excluir Intenção", description = "Remove permanentemente uma intenção da rede neural local.")
     @DeleteMapping("/intents/{id}")
-    public ResponseEntity<Void> deleteIntent(@PathVariable UUID id) {
+    public ResponseEntity<Void> deleteIntent(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId,
+            @PathVariable UUID id) {
         service.deleteIntent(id);
         return ResponseEntity.noContent().build();
     }

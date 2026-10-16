@@ -24,14 +24,33 @@ public class MetaAccountController {
 
     @Operation(summary = "Registrar/Atualizar Conta", description = "Adiciona uma nova conta da Meta ou atualiza uma existente (Page ID, Tokens).")
     @PostMapping
-    public ResponseEntity<MetaAccountEntity> registerOrUpdateAccount(@RequestBody MetaAccountEntity account) {
+    public ResponseEntity<MetaAccountEntity> registerOrUpdateAccount(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId,
+            @RequestBody MetaAccountEntity account) {
+
+        /* ========================================================================
+         * MUDANÇA MULTI-TENANCY:
+         * Atribui o TenantId do header para salvar a conta do Facebook/Instagram.
+         * ======================================================================== */
+        if (tenantId != null) {
+            account.setTenantId(tenantId);
+        }
         MetaAccountEntity saved = service.saveOrUpdateAccount(account);
         return ResponseEntity.status(HttpStatus.OK).body(saved);
     }
 
+    /* ========================================================================
+     * MUDANÇA MULTI-TENANCY:
+     * Traz exclusivamente as contas do Facebook/Instagram do Tenant atual.
+     * ======================================================================== */
     @Operation(summary = "Listar Contas", description = "Retorna a lista de todas as contas da Meta cadastradas no sistema.")
     @GetMapping
-    public ResponseEntity<List<MetaAccountEntity>> listAccounts() {
+    public ResponseEntity<List<MetaAccountEntity>> listAccounts(
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID tenantId) {
+
+        if (tenantId != null) {
+            return ResponseEntity.ok(service.getAccountsByTenant(tenantId));
+        }
         return ResponseEntity.ok(service.getAllAccounts());
     }
 

@@ -259,8 +259,8 @@ public class ChatServiceImpl implements ChatService {
     private void saveUserMessage(UUID sessionId, UUID tenantId, String userTextContent) {
         ChatMessageEntity userEntity = new ChatMessageEntity();
         userEntity.setSessionId(sessionId);
-        userEntity.setTenantId(tenantId);
-        userEntity.setContent(userTextContent);
+        userEntity.setTenantId(tenantId != null ? tenantId : UUID.nameUUIDFromBytes("public_tenant".getBytes()));
+        userEntity.setContent(userTextContent != null ? userTextContent : "");
         userEntity.setSenderType("USER");
         repository.save(userEntity);
     }
@@ -268,7 +268,7 @@ public class ChatServiceImpl implements ChatService {
     private void saveBotResponse(UUID sessionId, UUID tenantId, String responseContent, String senderType) {
         ChatMessageEntity botEntity = new ChatMessageEntity();
         botEntity.setSessionId(sessionId);
-        botEntity.setTenantId(tenantId);
+        botEntity.setTenantId(tenantId != null ? tenantId : UUID.nameUUIDFromBytes("public_tenant".getBytes()));
         botEntity.setContent(responseContent != null ? responseContent : "");
         botEntity.setSenderType(senderType);
         repository.save(botEntity);

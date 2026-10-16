@@ -27,17 +27,10 @@ public class TelegramBotConfigServiceImpl implements TelegramBotConfigService {
                     existing.setActive(botConfig.isActive());
                     if (botConfig.getTenantId() != null) {
                         existing.setTenantId(botConfig.getTenantId());
-                    } else if (existing.getTenantId() == null) {
-                        existing.setTenantId(UUID.randomUUID());
                     }
                     return repository.save(existing);
                 })
-                .orElseGet(() -> {
-                    if (botConfig.getTenantId() == null) {
-                        botConfig.setTenantId(UUID.randomUUID());
-                    }
-                    return repository.save(botConfig);
-                });
+                .orElseGet(() -> repository.save(botConfig));
     }
 
     @Override
@@ -46,7 +39,16 @@ public class TelegramBotConfigServiceImpl implements TelegramBotConfigService {
         return repository.findAll();
     }
 
-    // <-- NUEVO MÉTODO IMPLEMENTADO -->
+    /* ========================================================================
+     * MUDANÇA MULTI-TENANCY:
+     * Retorna a lista de bots filtrada pelo tenant.
+     * ======================================================================== */
+    @Override
+    @Transactional(readOnly = true)
+    public List<TelegramBotConfigEntity> getBotsByTenant(UUID tenantId) {
+        return repository.findByTenantId(tenantId);
+    }
+
     @Override
     @Transactional
     public void deleteBot(UUID id) {
