@@ -1,11 +1,14 @@
 package com.rival.user_service_api.service;
 
+import com.rival.user_service_api.dto.UpdatePasswordRequestDTO;
+import com.rival.user_service_api.dto.UpdateProfileRequestDTO;
 import com.rival.user_service_api.dto.UserRequestDTO;
 import com.rival.user_service_api.dto.UserResponseDTO;
 import com.rival.user_service_api.entity.TenantEntity;
 import com.rival.user_service_api.entity.UserEntity;
 import com.rival.user_service_api.repository.TenantRepository;
 import com.rival.user_service_api.repository.UserRepository;
+import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -62,5 +65,38 @@ public class UserService {
         return userRepository.findById(userId)
                 .map(u -> new UserResponseDTO(u.getId(), u.getName(), u.getEmail(), u.isActive()))
                 .orElseThrow(() -> new RuntimeException("Utilizador não encontrado."));
+    }
+
+    @Transactional
+    public UserResponseDTO updateProfile(UUID userId, UpdateProfileRequestDTO dto) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("Utilizador não encontrado."));
+
+        // Se o e-mail mudou, verifica se já existe outro utilizador com este e-mail
+        if (!user.getEmail().equalsIgnoreCase(dto.email())) {
+            userRepository.findByEmail(dto.email()).ifPresent(existing -> {
+                throw new IllegalArgumentException("O e-mail especificado já está em uso.");
+            });
+            user.setEmail(dto.email());
+        }
+
+        user.setName(dto.name());
+        UserEntity updated = userRepository.save(user);
+        return new UserResponseDTO(updated.getId(), updated.getName(), updated.getEmail(), updated.isActive());
+    }
+
+    @Transactional
+    public void updatePassword(UUID userId, UpdatePasswordRequestDTO dto) {
+        UserEntity user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("Utilizador não encontrado."));
+
+        // 1. Valida se a palavra-passe atual coincide com o hash do BCrypt
+        if (!passwordEncoder.matches(dto.currentPassword(), user.getPassword())) {
+            throw new IllegalArgumentException("A palavra-passe atual introduzida está incorreta.");
+        }
+
+        // 2. Encripta e guarda a nova palavra-passe
+        user.setPassword(passwordEncoder.encode(dto.newPassword()));
+        userRepository.save(user);
     }
 }

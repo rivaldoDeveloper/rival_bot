@@ -1,5 +1,7 @@
 package com.rival.user_service_api.controller;
 
+import com.rival.user_service_api.dto.UpdatePasswordRequestDTO;
+import com.rival.user_service_api.dto.UpdateProfileRequestDTO;
 import com.rival.user_service_api.dto.UserRequestDTO;
 import com.rival.user_service_api.dto.UserResponseDTO;
 import com.rival.user_service_api.service.UserService;
@@ -7,6 +9,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -14,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -56,5 +60,22 @@ public class UserController {
     public ResponseEntity<UserResponseDTO> findById(@PathVariable UUID id) {
         // Precisamos criar este método no UserService também!
         return ResponseEntity.ok(userService.getUserById(id));
+    }
+
+    @Operation(summary = "Atualizar Perfil", description = "Altera o nome e e-mail do utilizador autenticado.")
+    @PutMapping("/{id}/profile")
+    public ResponseEntity<UserResponseDTO> updateProfile(
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdateProfileRequestDTO dto) {
+        return ResponseEntity.ok(userService.updateProfile(id, dto));
+    }
+
+    @Operation(summary = "Alterar Palavra-passe", description = "Valida a palavra-passe atual e atualiza para a nova senha encriptada.")
+    @PutMapping("/{id}/password")
+    public ResponseEntity<Map<String, String>> updatePassword(
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdatePasswordRequestDTO dto) {
+        userService.updatePassword(id, dto);
+        return ResponseEntity.ok(Map.of("message", "Palavra-passe alterada com sucesso."));
     }
 }
