@@ -43,15 +43,15 @@ public class UserService {
         // 3. Guarda o utilizador na base de dados
         user.setTenant(tenant);
         user.setActive(true);
-
+        user.setThemePreference("light");
         UserEntity savedUser = userRepository.save(user);
 
-        return new UserResponseDTO(savedUser.getId(), savedUser.getName(), savedUser.getEmail(), savedUser.isActive());
+        return new UserResponseDTO(savedUser.getId(), savedUser.getName(), savedUser.getEmail(), savedUser.isActive(), savedUser.getAvatarUrl(), savedUser.getThemePreference());
     }
 
     public Page<UserResponseDTO> getUsersByTenant(UUID tenantId, Pageable pageable) {
         return userRepository.findByTenantId(tenantId, pageable)
-                .map(u -> new UserResponseDTO(u.getId(), u.getName(), u.getEmail(), u.isActive()));
+                .map(u -> new UserResponseDTO(u.getId(), u.getName(), u.getEmail(), u.isActive(), u.getAvatarUrl(), u.getThemePreference()));
     }
 
     // Valida se a senha enviada em texto limpo corresponde à senha encriptada (BCrypt) na base de dados
@@ -63,7 +63,7 @@ public class UserService {
 
     public UserResponseDTO getUserById(UUID userId) {
         return userRepository.findById(userId)
-                .map(u -> new UserResponseDTO(u.getId(), u.getName(), u.getEmail(), u.isActive()))
+                .map(u -> new UserResponseDTO(u.getId(), u.getName(), u.getEmail(), u.isActive(), u.getAvatarUrl(), u.getThemePreference()))
                 .orElseThrow(() -> new RuntimeException("Utilizador não encontrado."));
     }
 
@@ -72,7 +72,6 @@ public class UserService {
         UserEntity user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("Utilizador não encontrado."));
 
-        // Se o e-mail mudou, verifica se já existe outro utilizador com este e-mail
         if (!user.getEmail().equalsIgnoreCase(dto.email())) {
             userRepository.findByEmail(dto.email()).ifPresent(existing -> {
                 throw new IllegalArgumentException("O e-mail especificado já está em uso.");
@@ -81,8 +80,13 @@ public class UserService {
         }
 
         user.setName(dto.name());
+        user.setAvatarUrl(dto.avatarUrl()); // Grava o link do Cloudinary ou null se for apagado
+        if (dto.themePreference() != null && !dto.themePreference().isBlank()) {
+            user.setThemePreference(dto.themePreference());
+        }
+
         UserEntity updated = userRepository.save(user);
-        return new UserResponseDTO(updated.getId(), updated.getName(), updated.getEmail(), updated.isActive());
+        return new UserResponseDTO(updated.getId(), updated.getName(), updated.getEmail(), updated.isActive(), updated.getAvatarUrl(), updated.getThemePreference());
     }
 
     @Transactional

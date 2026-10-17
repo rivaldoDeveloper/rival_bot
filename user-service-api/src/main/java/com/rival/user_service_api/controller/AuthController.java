@@ -64,6 +64,8 @@ public class AuthController {
                 "name", user.getName(),
                 "email", user.getEmail(),
                 "tenantId", user.getTenant().getId(),
+                "avatarUrl", user.getAvatarUrl() != null ? user.getAvatarUrl() : "",
+                "themePreference", user.getThemePreference() != null ? user.getThemePreference() : "light",
                 "token", jwtToken,
                 "message", "Login efetuado com sucesso"
         ));
@@ -90,7 +92,7 @@ public class AuthController {
         newUser.setEmail(request.email());
         newUser.setPassword(passwordEncoder.encode(request.password()));
         newUser.setTenant(tenant);
-
+        newUser.setThemePreference("light");
         UserEntity savedUser = userRepository.save(newUser);
 
         // 4. Gera o token JWT para início de sessão imediato
@@ -106,6 +108,8 @@ public class AuthController {
                 "name", savedUser.getName(),
                 "email", savedUser.getEmail(),
                 "tenantId", savedUser.getTenant().getId(),
+                "avatarUrl", "",
+                "themePreference", savedUser.getThemePreference(),
                 "token", jwtToken,
                 "message", "Registo efetuado com sucesso"
         ));

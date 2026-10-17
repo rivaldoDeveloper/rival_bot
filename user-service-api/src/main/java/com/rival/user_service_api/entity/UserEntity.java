@@ -24,7 +24,13 @@ public class UserEntity {
     @Column(nullable = false)
     private boolean active = true;
 
-    // Relação: Vários Utilizadores pertencem a 1 Tenant
+    // NUEVOS CAMPOS
+    @Column(columnDefinition = "TEXT")
+    private String avatarUrl;
+
+    @Column(length = 10)
+    private String themePreference = "light"; // "light" o "dark"
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "tenant_id", nullable = false)
     private TenantEntity tenant;
@@ -63,6 +69,11 @@ public class UserEntity {
 
     public boolean isActive() { return active; }
     public void setActive(boolean active) { this.active = active; }
+    public String getAvatarUrl() { return avatarUrl; }
+    public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
+
+    public String getThemePreference() { return themePreference; }
+    public void setThemePreference(String themePreference) { this.themePreference = themePreference; }
 
     public TenantEntity getTenant() { return tenant; }
     public void setTenant(TenantEntity tenant) { this.tenant = tenant; }

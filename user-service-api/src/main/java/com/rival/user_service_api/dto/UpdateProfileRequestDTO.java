@@ -6,8 +6,9 @@ import jakarta.validation.constraints.NotBlank;
 public record UpdateProfileRequestDTO(
         @NotBlank(message = "O nome não pode estar em branco")
         String name,
-
         @NotBlank(message = "O e-mail não pode estar em branco")
         @Email(message = "Formato de e-mail inválido")
-        String email
+        String email,
+        String avatarUrl,
+        String themePreference
 ) {}
