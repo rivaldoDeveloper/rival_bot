@@ -7,9 +7,12 @@ jwt:
 spring:
   application:
     name: api-gateway
+  codec:
+    max-in-memory-size: 50MB
   cloud:
     gateway:
       globalcors:
+        add-to-simple-url-handler-mapping: true
         corsConfigurations:
           '[/**]':
             allowedOrigins: "http://localhost:4200"
@@ -36,6 +39,11 @@ spring:
           uri: http://localhost:8081
           predicates:
             - Path=/api/tenants/**
+
+        - id: chatbot-files
+          uri: http://localhost:8083
+          predicates:
+            - Path=/api/v1/files/**
 
         - id: chatbot-api
           uri: http://localhost:8083
