@@ -12,11 +12,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
-
 import java.util.Map;
 
 @RestController
-@CrossOrigin(origins = "http://localhost:4200")
+// REMOVIDO: @CrossOrigin(origins = "http://localhost:4200") -> O API Gateway (8080) é quem gere o CORS centralmente
 @RequestMapping("/api/v1/files")
 @Tag(name = "File Management", description = "Endpoints para upload e exclusao de midias na nuvem (Cloudinary)")
 public class FileController {
@@ -38,6 +37,7 @@ public class FileController {
             log.info("Mídia salva no Cloudinary: {}", cloudinaryUrl);
             return ResponseEntity.ok(Map.of("url", cloudinaryUrl));
         } catch (Exception e) {
+            log.error("Erro interno ao fazer upload para o Cloudinary", e);
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Falha ao processar o upload: " + e.getMessage()));
         }
