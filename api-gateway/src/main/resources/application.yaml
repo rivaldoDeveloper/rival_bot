@@ -50,6 +50,11 @@ spring:
           predicates:
             - Path=/api/v1/**
 
+        - id: user-service-payments
+          uri: http://localhost:8081
+          predicates:
+            - Path=/api/payments/**
+
         - id: helpdesk-bff
           uri: http://localhost:8084
           predicates:
