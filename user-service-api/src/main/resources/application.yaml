@@ -22,3 +22,10 @@ spring:
       hibernate:
         format_sql: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
+
+# === CONFIGURAÇÃO STRIPE ===
+stripe:
+  api-key: ${STRIPE_SECRET_KEY:sk_test_51US5u0HynH6JXlKuIMNdfd7O7rVwKYJVPcP1fe93hXctkdr6o1KWfooBUFadDWpFbzJ4ZV5TNoxGXwaHJltpP89b00trJbphHQ}
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_seu_segredo_webhook_aqui}
+  success-url: "http://localhost:4200/dashboard?payment=success"
+  cancel-url: "http://localhost:4200/dashboard?payment=cancelled"
