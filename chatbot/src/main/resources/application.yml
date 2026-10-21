@@ -88,9 +88,6 @@ telegram:
     token: ${TELEGRAM_BOT_TOKEN:}
 
 cloudinary:
-  cloud-name: "dltdpep6k"
-  api-key: "956284529795669"
-  api-secret: "vUdN9rfiIbSVSZEoeRz_RvahtRA"
-  cloud_name: "dltdpep6k"
-  api_key: "956284529795669"
-  api_secret: "vUdN9rfiIbSVSZEoeRz_RvahtRA"
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:dltdpep6k}
+  api-key: ${CLOUDINARY_API_KEY:956284529795669}
+  api-secret: ${CLOUDINARY_API_SECRET:vUdN9rfiIbSVSZEoeRz_RvahtRA}

@@ -27,6 +27,7 @@ import java.util.UUID;
 public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
     private static final Logger log = LoggerFactory.getLogger(WhatsAppWebhookServiceImpl.class);
+
     private final ChatService chatService;
     private final WhatsAppSenderService whatsAppSenderService;
     private final WhatsAppAccountRepository whatsAppAccountRepository;
@@ -101,12 +102,12 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             if (response != null) {
                 String respText = response.response();
 
-                if (respText != null && (respText.contains("|||") || respText.startsWith("TEXT:") || respText.startsWith("AUDIO:") || respText.startsWith("VIDEO:"))) {
+                if (respText != null && (respText.contains("|||") || respText.startsWith("TEXT:") || respText.startsWith("IMAGE:") || respText.startsWith("AUDIO:") || respText.startsWith("VIDEO:"))) {
                     String[] parts = respText.split("\\|\\|\\|");
                     for (String part : parts) {
-                        if (part.startsWith("AUDIO:") || part.startsWith("VIDEO:")) {
+                        if (part.startsWith("IMAGE:") || part.startsWith("AUDIO:") || part.startsWith("VIDEO:")) {
                             String url = part.substring(6).trim();
-                            String mime = part.startsWith("AUDIO:") ? "audio/webm" : "video/mp4"; // Força o MIME Type correto
+                            String mime = part.startsWith("AUDIO:") ? "audio/webm" : (part.startsWith("VIDEO:") ? "video/mp4" : "image/jpeg");
 
                             if (url.startsWith("http")) {
                                 // Manda diretamente da Nuvem (Cloudinary)

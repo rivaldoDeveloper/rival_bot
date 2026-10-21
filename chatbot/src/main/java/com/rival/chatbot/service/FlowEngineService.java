@@ -19,6 +19,7 @@ import java.util.*;
 public class FlowEngineService {
 
     private static final Logger log = LoggerFactory.getLogger(FlowEngineService.class);
+
     private final CustomerDataRepository customerDataRepository;
     private final FlowConfigRepository flowConfigRepository;
     private final DataExtractorService dataExtractorService;
@@ -34,21 +35,21 @@ public class FlowEngineService {
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
-    // Identifica palavras comuns que devem reiniciar o fluxo visual automaticamente
     private boolean isResetKeyword(String message) {
         if (message == null) return false;
         String lower = message.toLowerCase().trim();
-        return lower.matches("^(oi|olá|ola|menu|inicio|início|começar|start|voltar).*");
+        return lower.matches("^(oi|olá|ola|menu|inicio|início|começar|comecar|start|voltar).*");
     }
 
     public ChatResponseDTO processFlow(UUID sessionId, UUID tenantId, String userMessage, String channel) {
         try {
             String currentChannel = (channel != null && !channel.isBlank()) ? channel : "WHATSAPP";
-            Optional<FlowConfigEntity> activeFlowOpt = flowConfigRepository.findFirstByTenantIdAndChannelAndActiveTrue(tenantId, currentChannel);
 
+            Optional<FlowConfigEntity> activeFlowOpt = flowConfigRepository.findFirstByTenantIdAndChannelAndActiveTrue(tenantId, currentChannel);
             if (activeFlowOpt.isEmpty()) return null;
 
             FlowDefinitionDTO flow = objectMapper.readValue(activeFlowOpt.get().getFlowDataJson(), FlowDefinitionDTO.class);
+
             CustomerDataEntity customer = customerDataRepository.findBySessionId(sessionId).orElseGet(() -> {
                 CustomerDataEntity newCustomer = new CustomerDataEntity();
                 newCustomer.setSessionId(sessionId);
@@ -86,6 +87,7 @@ public class FlowEngineService {
                 Optional<FlowDefinitionDTO.FlowNode> trigger = flow.nodes().stream()
                         .filter(n -> n.type() != null && n.type().toLowerCase().contains("trigger"))
                         .findFirst();
+
                 if (trigger.isEmpty()) return null;
                 queue.addAll(getNextActiveConnectedNodes(flow, trigger.get().id()));
             } else {
@@ -117,6 +119,10 @@ public class FlowEngineService {
                 if (type.contains("text") || type.contains("message")) {
                     if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
                         sequence.add("TEXT:" + data.text().trim());
+                    }
+                } else if (type.contains("image")) {
+                    if (data != null && data.imageUrl() != null && !data.imageUrl().trim().isEmpty()) {
+                        sequence.add("IMAGE:" + data.imageUrl().trim());
                     }
                 } else if (type.contains("audio")) {
                     if (data != null && data.audioUrl() != null && !data.audioUrl().trim().isEmpty()) {

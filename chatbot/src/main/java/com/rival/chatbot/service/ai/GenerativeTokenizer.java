@@ -1,13 +1,12 @@
 package com.rival.chatbot.service.ai;
 
-import org.springframework.stereotype.Service;
-
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@Service
+/* LEGADO DESATIVADO - Vocabulário de demonstração sem uso em produção */
+// @Service
 public class GenerativeTokenizer {
 
     private final Map<String, Integer> tokenToId = new HashMap<>();

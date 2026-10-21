@@ -103,12 +103,12 @@ public class ChatServiceImpl implements ChatService {
                     TelegramBotService botToUse = findTelegramBotByCustomer(customer);
                     if (botToUse != null) botToUse.sendMessageToClient(externalId, request.message());
                 } else if ("MESSENGER".equals(customer.getChannel()) || "INSTAGRAM".equals(customer.getChannel())) {
-                    metaAccountRepository.findAll().stream()
-                            .filter(acc -> acc.getTenantId().equals(request.tenantId())).findFirst()
+                    metaAccountRepository.findByTenantId(request.tenantId()).stream().findFirst()
                             .ifPresent(acc -> metaSenderService.sendMessage(acc.getPageAccessToken(), externalId, request.message()));
                 }
             }
         });
+
         return new ChatResponseDTO(request.message(), null, null, "AGENT", false, LocalDateTime.now());
     }
 
@@ -139,8 +139,7 @@ public class ChatServiceImpl implements ChatService {
                         TelegramBotService botToUse = findTelegramBotByCustomer(customer);
                         if (botToUse != null) botToUse.sendMediaToClient(externalId, message, localFile);
                     } else if ("MESSENGER".equals(customer.getChannel()) || "INSTAGRAM".equals(customer.getChannel())) {
-                        metaAccountRepository.findAll().stream()
-                                .filter(acc -> acc.getTenantId().equals(tenantId)).findFirst()
+                        metaAccountRepository.findByTenantId(tenantId).stream().findFirst()
                                 .ifPresent(acc -> {
                                     String mimeType = "file";
                                     try {
@@ -159,6 +158,7 @@ public class ChatServiceImpl implements ChatService {
                     }
                 }
             });
+
             return new ChatResponseDTO(contentToSave, null, null, "AGENT", false, LocalDateTime.now());
         } catch (Exception e) {
             throw new RuntimeException("Falha ao processar arquivo do agente.", e);
@@ -175,7 +175,9 @@ public class ChatServiceImpl implements ChatService {
             try {
                 String fileUrl = cloudinaryService.uploadFile(imageFile);
                 finalContentBuilder.append(fileUrl);
-            } catch (Exception e) { log.error("Erro ao processar imagem", e); }
+            } catch (Exception e) {
+                log.error("Erro ao processar imagem", e);
+            }
         }
 
         String finalContent = finalContentBuilder.toString().trim();
@@ -185,11 +187,17 @@ public class ChatServiceImpl implements ChatService {
     @Override
     @Transactional
     public ChatResponseDTO processAudioFileMessage(UUID sessionId, UUID tenantId, File audioFile) {
-        String fileUrl = "";
+        String contentToProcess = "";
         if (audioFile != null && audioFile.exists()) {
-            fileUrl = cloudinaryService.uploadFile(audioFile);
+            String fileUrl = cloudinaryService.uploadFile(audioFile);
+            String transcribed = audioTranscriptionService.transcribeAudioFile(audioFile);
+            if (transcribed != null && !transcribed.isBlank() && !transcribed.contains("motor de transcrição está desligado")) {
+                contentToProcess = transcribed + "\nAUDIO:" + fileUrl;
+            } else {
+                contentToProcess = "AUDIO:" + fileUrl;
+            }
         }
-        return handleStandardChat(sessionId, tenantId, fileUrl, "WHATSAPP", null);
+        return handleStandardChat(sessionId, tenantId, contentToProcess, "WHATSAPP", null);
     }
 
     private ChatResponseDTO handleStandardChat(UUID sessionId, UUID tenantId, String userTextContent, String channel, String externalId) {
@@ -203,7 +211,8 @@ public class ChatServiceImpl implements ChatService {
 
         if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
 
-        String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
+        // Passa o tenantId para isolar as intenções NLP por empresa
+        String localContext = localVectorNlpService.processAndMatch(sessionId, tenantId, userTextContent);
         String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
 
         saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
@@ -246,9 +255,8 @@ public class ChatServiceImpl implements ChatService {
             return flowResponse;
         }
 
-        log.info("Flow Engine cedeu o comando à NLP/IA. Processando a mensagem: '{}'", userTextContent);
-
-        String localContext = localVectorNlpService.processAndMatch(sessionId, userTextContent);
+        log.info("Flow Engine cedeu o comando à NLP/IA. Processando a mensagem: '{}' (Tenant: {})", userTextContent, tenantId);
+        String localContext = localVectorNlpService.processAndMatch(sessionId, tenantId, userTextContent);
         String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
 
         saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
@@ -257,18 +265,24 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private void saveUserMessage(UUID sessionId, UUID tenantId, String userTextContent) {
+        if (tenantId == null) {
+            throw new IllegalArgumentException("O tenantId é obrigatório para registrar a mensagem.");
+        }
         ChatMessageEntity userEntity = new ChatMessageEntity();
         userEntity.setSessionId(sessionId);
-        userEntity.setTenantId(tenantId != null ? tenantId : UUID.nameUUIDFromBytes("public_tenant".getBytes()));
+        userEntity.setTenantId(tenantId);
         userEntity.setContent(userTextContent != null ? userTextContent : "");
         userEntity.setSenderType("USER");
         repository.save(userEntity);
     }
 
     private void saveBotResponse(UUID sessionId, UUID tenantId, String responseContent, String senderType) {
+        if (tenantId == null) {
+            throw new IllegalArgumentException("O tenantId é obrigatório para registrar a resposta.");
+        }
         ChatMessageEntity botEntity = new ChatMessageEntity();
         botEntity.setSessionId(sessionId);
-        botEntity.setTenantId(tenantId != null ? tenantId : UUID.nameUUIDFromBytes("public_tenant".getBytes()));
+        botEntity.setTenantId(tenantId);
         botEntity.setContent(responseContent != null ? responseContent : "");
         botEntity.setSenderType(senderType);
         repository.save(botEntity);
@@ -290,6 +304,12 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private String resolveInputContent(ChatRequestDTO request) {
+        if (request.base64Image() != null && !request.base64Image().isBlank()) {
+            String ocrText = ocrService.extractTextFromBase64(request.base64Image());
+            if (ocrText != null && !ocrText.isBlank()) {
+                return (request.message() != null ? request.message() + " " : "") + ocrText;
+            }
+        }
         return request.message() != null ? request.message() : "";
     }
 
@@ -315,7 +335,9 @@ public class ChatServiceImpl implements ChatService {
         }
 
         File serverFile = new File(dir, UUID.randomUUID().toString().substring(0, 8) + "_" + safeName);
-        try (FileOutputStream fos = new FileOutputStream(serverFile)) { fos.write(bytes); }
+        try (FileOutputStream fos = new FileOutputStream(serverFile)) {
+            fos.write(bytes);
+        }
         return serverFile;
     }
 
@@ -328,7 +350,8 @@ public class ChatServiceImpl implements ChatService {
     @Override
     @Transactional
     public ChatResponseDTO editMessage(UUID id, String newContent) {
-        ChatMessageEntity msg = repository.findById(id).orElseThrow(() -> new IllegalArgumentException("Mensagem não encontrada"));
+        ChatMessageEntity msg = repository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Mensagem não encontrada"));
         msg.setContent(newContent);
         repository.save(msg);
         return new ChatResponseDTO(newContent, null, null, msg.getSenderType(), false, msg.getCreatedAt());
@@ -346,7 +369,7 @@ public class ChatServiceImpl implements ChatService {
     private TelegramBotService findTelegramBotByCustomer(CustomerDataEntity customer) {
         String botUsername = null;
         if (customer.getName() != null && customer.getName().contains("(")) {
-            botUsername = customer.getName().substring(customer.getName().indexOf("(") + 1, customer.getName().indexOf(")"));
+            botUsername = customer.getName().substring(customer.getName().indexOf("(") + 1, customer.getName().indexOf(")")).replace("@", "");
         }
         if (botUsername != null && TelegramInitializerConfig.ACTIVE_BOTS.containsKey(botUsername)) {
             return TelegramInitializerConfig.ACTIVE_BOTS.get(botUsername);

@@ -42,6 +42,7 @@ public class MetaWebhookServiceImpl {
                 String pageId = entry.id();
 
                 MetaAccountEntity account = metaAccountRepository.findByPageId(pageId).orElse(null);
+
                 if (account == null) {
                     log.warn("Mensagem recebida para PageID desconhecido: {}", pageId);
                     continue;
@@ -77,15 +78,17 @@ public class MetaWebhookServiceImpl {
                     if (response != null) {
                         String respText = response.response();
 
-                        if (respText != null && (respText.contains("|||") || respText.startsWith("TEXT:") || respText.startsWith("AUDIO:") || respText.startsWith("VIDEO:"))) {
+                        if (respText != null && (respText.contains("|||") || respText.startsWith("TEXT:") || respText.startsWith("IMAGE:") || respText.startsWith("AUDIO:") || respText.startsWith("VIDEO:"))) {
                             String[] parts = respText.split("\\|\\|\\|");
                             for (String part : parts) {
-                                if (part.startsWith("AUDIO:")) {
-                                    metaSenderService.sendMediaMessage(account.getPageAccessToken(), senderId, "audio", part.substring(6));
+                                if (part.startsWith("IMAGE:")) {
+                                    metaSenderService.sendMediaMessage(account.getPageAccessToken(), senderId, "image", part.substring(6).trim());
+                                } else if (part.startsWith("AUDIO:")) {
+                                    metaSenderService.sendMediaMessage(account.getPageAccessToken(), senderId, "audio", part.substring(6).trim());
                                 } else if (part.startsWith("VIDEO:")) {
-                                    metaSenderService.sendMediaMessage(account.getPageAccessToken(), senderId, "video", part.substring(6));
+                                    metaSenderService.sendMediaMessage(account.getPageAccessToken(), senderId, "video", part.substring(6).trim());
                                 } else if (part.startsWith("TEXT:")) {
-                                    metaSenderService.sendMessage(account.getPageAccessToken(), senderId, part.substring(5));
+                                    metaSenderService.sendMessage(account.getPageAccessToken(), senderId, part.substring(5).trim());
                                 }
                             }
                         } else {
@@ -93,7 +96,7 @@ public class MetaWebhookServiceImpl {
                                 metaSenderService.sendMediaMessage(account.getPageAccessToken(), senderId, "audio", response.audioUrl());
                             }
                             if (response.imageUrl() != null && !response.imageUrl().isBlank()) {
-                                metaSenderService.sendMediaMessage(account.getPageAccessToken(), senderId, "video", response.imageUrl());
+                                metaSenderService.sendMediaMessage(account.getPageAccessToken(), senderId, "image", response.imageUrl());
                             }
                             if (respText != null && !respText.isBlank()) {
                                 metaSenderService.sendMessage(account.getPageAccessToken(), senderId, respText);

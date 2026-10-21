@@ -1,34 +1,45 @@
 package com.rival.chatbot.controller.meta;
 
 import com.rival.chatbot.dto.meta.MetaWebhookDTO;
+import com.rival.chatbot.repository.meta.MetaAccountRepository;
 import com.rival.chatbot.service.meta.impl.MetaWebhookServiceImpl;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/meta")
-@Tag(name = "Meta Webhook", description = "Endpoints para a integracao do Webhook oficial da Meta for Developers")
+@Tag(name = "Meta Webhook", description = "Endpoints para a integração do Webhook oficial da Meta for Developers")
 public class MetaWebhookController {
 
     private final MetaWebhookServiceImpl metaWebhookService;
+    private final MetaAccountRepository metaAccountRepository;
 
-    // Defina este token no seu application.yml (ex: spring.meta.verify-token) ou use um fixo para validar a ligacao ao painel da Meta
-    private final String GLOBAL_VERIFY_TOKEN = "meu_token_secreto_meta_123";
+    @Value("${whatsapp.api.verify-token:}")
+    private String fallbackVerifyToken;
 
-    public MetaWebhookController(MetaWebhookServiceImpl metaWebhookService) {
+    public MetaWebhookController(MetaWebhookServiceImpl metaWebhookService,
+                                 MetaAccountRepository metaAccountRepository) {
         this.metaWebhookService = metaWebhookService;
+        this.metaAccountRepository = metaAccountRepository;
     }
 
-    // 1. Endpoint GET para validação do Webhook no painel da Meta for Developers
-    @Operation(summary = "Validar Webhook (GET)", description = "Endpoint de validacao exigido pela Meta para confirmar a URL do Webhook.")
+    @Operation(summary = "Validar Webhook (GET)", description = "Endpoint de validação exigido pela Meta para confirmar a URL do Webhook.")
     @GetMapping("/webhook")
     public ResponseEntity<String> verifyWebhook(@RequestParam("hub.mode") String mode,
                                                 @RequestParam("hub.verify_token") String token,
                                                 @RequestParam("hub.challenge") String challenge) {
-        if ("subscribe".equals(mode) && GLOBAL_VERIFY_TOKEN.equals(token)) {
+        boolean tokenMatchedInDb = metaAccountRepository.findAll().stream()
+                .anyMatch(acc -> token != null && token.equals(acc.getVerifyToken()));
+
+        boolean tokenMatchedFallback = fallbackVerifyToken != null
+                && !fallbackVerifyToken.isBlank()
+                && fallbackVerifyToken.equals(token);
+
+        if ("subscribe".equals(mode) && (tokenMatchedInDb || tokenMatchedFallback)) {
             return ResponseEntity.ok(challenge);
         }
         return ResponseEntity.status(HttpStatus.FORBIDDEN).build();

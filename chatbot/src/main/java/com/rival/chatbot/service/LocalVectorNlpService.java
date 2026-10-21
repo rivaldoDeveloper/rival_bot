@@ -16,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class LocalVectorNlpService {
 
     private static final Logger log = LoggerFactory.getLogger(LocalVectorNlpService.class);
+
     private final NlpIntentRepository intentRepository;
     private final Map<UUID, String> lastResponseBySession = new ConcurrentHashMap<>();
 
@@ -34,14 +35,23 @@ public class LocalVectorNlpService {
         log.info("Atualizando cache de PNL...");
     }
 
+    // Sobrecarga mantida para retrocompatibilidade com classes legadas
     public String processAndMatch(UUID sessionId, String userMessage) {
+        return processAndMatch(sessionId, null, userMessage);
+    }
+
+    // Método principal com isolamento Multi-Tenant por tenantId
+    public String processAndMatch(UUID sessionId, UUID tenantId, String userMessage) {
         if (userMessage == null || userMessage.isBlank()) return "";
 
-        List<NlpIntentEntity> intents = getAllIntentsCached();
+        List<NlpIntentEntity> intents = getAllIntentsCached().stream()
+                .filter(i -> tenantId == null || tenantId.equals(i.getTenantId()))
+                .toList();
+
         if (intents.isEmpty()) return "Ainda não fui treinado.";
 
         String cleanedInput = TextNormalizerUtil.cleanAndDeduplicate(userMessage);
-        int inputWordCount = cleanedInput.split("\\s+").length; // Conta o tamanho do texto do cliente
+        int inputWordCount = cleanedInput.split("\\s+").length;
         float[] userInputVector = generateTextVector(cleanedInput);
 
         NlpIntentEntity bestMatch = null;
@@ -56,19 +66,19 @@ public class LocalVectorNlpService {
                     String cleanKw = TextNormalizerUtil.cleanAndDeduplicate(keyword);
                     if (cleanKw.isBlank()) continue;
 
-                    int kwWordCount = cleanKw.split("\\s+").length; // Conta o tamanho da palavra-chave
+                    int kwWordCount = cleanKw.split("\\s+").length;
 
                     // Exige que a palavra-chave seja uma palavra isolada e completa na frase
                     if (cleanedInput.matches(".*\\b" + java.util.regex.Pattern.quote(cleanKw) + "\\b.*")) {
 
                         if (cleanedInput.equals(cleanKw)) {
-                            maxScore = Math.max(maxScore, 1.0); // Match perfeito e exato (100%)
+                            maxScore = Math.max(maxScore, 1.0);
                         } else if (kwWordCount > 1) {
-                            maxScore = Math.max(maxScore, 0.90); // Expressão composta (ex: "comprar imóvel")
+                            maxScore = Math.max(maxScore, 0.90);
                         } else {
                             // É apenas UMA palavra-chave perdida no meio do texto
                             if (inputWordCount <= 5 && cleanKw.length() > 3) {
-                                maxScore = Math.max(maxScore, 0.85); // Frase curta, palavra forte (Justo)
+                                maxScore = Math.max(maxScore, 0.85);
                             } else {
                                 // TEXTO LONGO: Uma palavra solta não pode dominar a resposta! Força a nota para baixo.
                                 maxScore = Math.max(maxScore, 0.50);
@@ -87,7 +97,8 @@ public class LocalVectorNlpService {
             }
         }
 
-        log.info("NLP Score Final: {} para a intenção: {}", highestSimilarity, bestMatch != null ? bestMatch.getName() : "Nenhuma");
+        log.info("NLP Score Final: {} para a intenção: {} (Tenant: {})",
+                highestSimilarity, bestMatch != null ? bestMatch.getName() : "Nenhuma", tenantId);
 
         // Limiar de confiança rigoroso (85%)
         if (bestMatch != null && highestSimilarity >= 0.85 && !bestMatch.getResponses().isEmpty()) {
