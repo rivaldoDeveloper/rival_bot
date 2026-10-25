@@ -1,29 +1,47 @@
 package com.rival.chatbot.service;
 
+import com.rival.chatbot.domain.BotSettingsEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
 public class OwnGenerativeAiService {
 
     private static final Logger log = LoggerFactory.getLogger(OwnGenerativeAiService.class);
+    private final BotSettingsService botSettingsService;
+
+    public OwnGenerativeAiService(BotSettingsService botSettingsService) {
+        this.botSettingsService = botSettingsService;
+    }
+
+    // Sobrecarga para retrocompatibilidade
+    public String generateOwnResponse(String userPrompt, String retrievedContext) {
+        return generateOwnResponse(null, userPrompt, retrievedContext);
+    }
 
     /**
      * Motor Sintetizador NLP em Java Puro.
      * Analisa a frase do usuário e formata a resposta baseada no conhecimento do PostgreSQL.
      */
-    public String generateOwnResponse(String userPrompt, String retrievedContext) {
+    public String generateOwnResponse(UUID tenantId, String userPrompt, String retrievedContext) {
+        BotSettingsEntity settings = botSettingsService.getSettingsByTenant(tenantId);
+
         if (userPrompt == null || userPrompt.isBlank()) {
-            return "Como posso ajudar você hoje?";
+            return settings.getFallbackGenericMessage();
         }
 
-        if (retrievedContext == null || retrievedContext.contains("Desculpe") || retrievedContext.contains("Ainda não fui treinado")) {
-            return generateDynamicFallback(userPrompt);
+        if ("__UNTRAINED__".equals(retrievedContext) || (retrievedContext != null && retrievedContext.contains("Ainda não fui treinado"))) {
+            return settings.getUntrainMessage();
+        }
+
+        if (retrievedContext == null || "__NO_MATCH__".equals(retrievedContext) || retrievedContext.contains("Desculpe, não localizei")) {
+            return generateDynamicFallback(userPrompt, settings);
         }
 
         return synthesizeNaturalResponse(userPrompt, retrievedContext);
@@ -61,7 +79,7 @@ public class OwnGenerativeAiService {
         return response.toString();
     }
 
-    private String generateDynamicFallback(String userPrompt) {
+    private String generateDynamicFallback(String userPrompt, BotSettingsEntity settings) {
         List<String> tokens = Arrays.asList(userPrompt.toLowerCase().split("[\\s\\p{Punct}]+"));
 
         // Extrai palavras-chave ignorando preposições e palavras curtas
@@ -72,15 +90,19 @@ public class OwnGenerativeAiService {
         // TRAVA DE SEGURANÇA: Se o texto for muito longo (mais de 3 palavras-chave),
         // damos uma resposta educada sem repetir o testamento do cliente.
         if (keywords.size() > 3) {
-            return "Ainda não tenho as diretrizes exatas para responder a essa questão de forma completa. Posso transferir para um especialista ou ajudar com outro assunto?";
+            return settings.getFallbackLongMessage();
         }
 
         // Se for uma pergunta curta (ex: "tem garagem?"), ele repete o assunto de forma natural
         if (!keywords.isEmpty()) {
             String subject = String.join(" ", keywords);
-            return "Eu consultei nossa base de dados, mas ainda não tenho detalhes específicos sobre '" + subject + "'. Posso ajudar com outro assunto?";
+            String template = settings.getFallbackShortMessage();
+            if (template != null && template.contains("{assunto}")) {
+                return template.replace("{assunto}", subject);
+            }
+            return template;
         }
 
-        return "Analisei o que você disse, mas não encontrei diretrizes no banco de dados. Pode detalhar melhor?";
+        return settings.getFallbackGenericMessage();
     }
 }

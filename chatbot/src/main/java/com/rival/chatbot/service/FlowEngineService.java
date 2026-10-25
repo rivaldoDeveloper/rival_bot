@@ -19,27 +19,58 @@ import java.util.*;
 public class FlowEngineService {
 
     private static final Logger log = LoggerFactory.getLogger(FlowEngineService.class);
-
     private final CustomerDataRepository customerDataRepository;
     private final FlowConfigRepository flowConfigRepository;
     private final DataExtractorService dataExtractorService;
+    private final BotSettingsService botSettingsService;
     private final ObjectMapper objectMapper;
 
     public FlowEngineService(CustomerDataRepository customerDataRepository,
                              FlowConfigRepository flowConfigRepository,
-                             DataExtractorService dataExtractorService) {
+                             DataExtractorService dataExtractorService,
+                             BotSettingsService botSettingsService) {
         this.customerDataRepository = customerDataRepository;
         this.flowConfigRepository = flowConfigRepository;
         this.dataExtractorService = dataExtractorService;
+        this.botSettingsService = botSettingsService;
         this.objectMapper = new ObjectMapper()
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
-    // Identifica palavras comuns que devem reiniciar o fluxo visual automaticamente
-    private boolean isResetKeyword(String message) {
-        if (message == null) return false;
-        String lower = message.toLowerCase().trim();
-        return lower.matches("^(oi|olá|ola|menu|inicio|início|começar|comecar|start|voltar).*");
+    private boolean isStartOrResetKeyword(UUID tenantId, String message) {
+        return botSettingsService.matchesResetKeyword(tenantId, message);
+    }
+
+    /**
+     * Verifica se a entrada é inválida/sem sentido (ex: "45464646466" ou apenas símbolos)
+     * quando o fluxo espera uma resposta conversacional normal (e não uma extração de CPF/Telefone).
+     */
+    private boolean isInvalidConversationalInput(String message, boolean isExtractNode) {
+        if (message == null || message.isBlank()) return true;
+        String clean = message.trim();
+
+        // Se for um bloco de Extração CRM (CPF, RG, Telefone), números são permitidos!
+        if (isExtractNode) {
+            return clean.length() < 2;
+        }
+
+        // Se o utilizador mandou apenas números soltos longos (ex: "45464646466") numa conversa normal
+        if (clean.matches("^\\d{4,}$")) {
+            return true;
+        }
+
+        // Se não tem nenhuma letra nem número válido
+        if (!clean.matches(".*[\\p{L}0-9].*")) {
+            return true;
+        }
+
+        // Ruído de teclado sem vogais (ex: "asdfghjkl", "bcdfgh")
+        String onlyLetters = clean.replaceAll("[^\\p{L}]", "").toLowerCase();
+        if (onlyLetters.length() >= 5 && !onlyLetters.matches(".*[aeiouáéíóúâêôãõ].*")) {
+            return true;
+        }
+
+        return false;
     }
 
     public ChatResponseDTO processFlow(UUID sessionId, UUID tenantId, String userMessage, String channel) {
@@ -61,115 +92,103 @@ public class FlowEngineService {
 
             String currentNodeId = customer.getCurrentNodeId();
 
-            // Captura a resposta do cliente para o CRM se estava parado num bloco 'extract'
-            if (currentNodeId != null && !currentNodeId.isBlank() && !"NLP_MODE".equals(currentNodeId)) {
-                FlowDefinitionDTO.FlowNode lastNode = getNodeById(flow, currentNodeId);
-                if (lastNode != null && "extract".equalsIgnoreCase(lastNode.type())) {
-                    if (lastNode.data() != null && lastNode.data().fieldToExtract() != null) {
-                        dataExtractorService.saveCustomField(sessionId, lastNode.data().fieldToExtract(), userMessage);
-                    }
-                }
+            // 1. Se o cliente mandou uma palavra de reinício ("oi", "olá", "menu"), reinicia o fluxo do zero
+            if (isStartOrResetKeyword(tenantId, userMessage)) {
+                currentNodeId = null;
+                customer.setCurrentNodeId(null);
             }
 
-            // REINÍCIO INTELIGENTE: Se estava na IA mas disse "oi/menu", volta para o fluxo visual.
-            if ("NLP_MODE".equals(currentNodeId)) {
-                if (isResetKeyword(userMessage)) {
-                    log.info("Reset Inteligente acionado. A repor o Flow Engine para a sessão {}", sessionId);
-                    customer.setCurrentNodeId(null);
-                    currentNodeId = null;
-                } else {
+            // 2. Se ainda não iniciou o fluxo (currentNodeId == null) mas a pessoa NÃO mandou uma saudação/gatilho
+            // (ex: mandou "45464646466" ou fez uma pergunta direta para a NLP), cede para a NLP/Fallback!
+            if (currentNodeId == null || currentNodeId.isBlank()) {
+                if (!isStartOrResetKeyword(tenantId, userMessage)) {
+                    log.info("Mensagem '{}' não é um gatilho de início de fluxo. Encaminhando para análise NLP/Fallback.", userMessage);
                     return null;
                 }
             }
 
-            Queue<String> queue = new LinkedList<>();
+            // 3. Se já terminou o fluxo visual e está em NLP_MODE, cede para a NLP
+            if ("NLP_MODE".equals(currentNodeId)) {
+                return null;
+            }
 
-            if (currentNodeId == null || currentNodeId.isBlank()) {
+            // 4. Verifica o nó em que o utilizador estava parado
+            FlowDefinitionDTO.FlowNode lastNode = (currentNodeId != null) ? getNodeById(flow, currentNodeId) : null;
+            boolean isLastNodeExtract = lastNode != null && "extract".equalsIgnoreCase(lastNode.type());
+
+            // Se estava no meio do fluxo e digitou algo inválido/sem sentido (ex: "45464646466"),
+            // NÃO avança para o próximo bloco! Responde com o fallback configurado e mantém no nó atual.
+            if (currentNodeId != null && isInvalidConversationalInput(userMessage, isLastNodeExtract)) {
+                String fallbackMsg = botSettingsService.getSettingsByTenant(tenantId).getFallbackGenericMessage();
+                return new ChatResponseDTO(
+                        "TEXT:" + fallbackMsg,
+                        null,
+                        null,
+                        "BOT",
+                        false,
+                        LocalDateTime.now()
+                );
+            }
+
+            // 5. Se estava num bloco 'extract' e o dado é válido, salva no CRM
+            if (isLastNodeExtract && lastNode.data() != null && lastNode.data().fieldToExtract() != null) {
+                dataExtractorService.saveCustomField(sessionId, lastNode.data().fieldToExtract(), userMessage);
+            }
+
+            // 6. Determina o ponto de partida para buscar o próximo passo
+            String startNodeId = currentNodeId;
+            if (startNodeId == null || startNodeId.isBlank()) {
                 Optional<FlowDefinitionDTO.FlowNode> trigger = flow.nodes().stream()
                         .filter(n -> n.type() != null && n.type().toLowerCase().contains("trigger"))
                         .findFirst();
-
                 if (trigger.isEmpty()) return null;
-                queue.addAll(getNextActiveConnectedNodes(flow, trigger.get().id()));
-            } else {
-                queue.addAll(getNextActiveConnectedNodes(flow, currentNodeId));
+                startNodeId = trigger.get().id();
             }
 
-            if (queue.isEmpty()) {
+            // 7. Avança 1 passo ativo por turno de conversa
+            FlowDefinitionDTO.FlowNode nextNode = findNextActiveNode(flow, startNodeId);
+
+            if (nextNode == null) {
                 customer.setCurrentNodeId("NLP_MODE");
                 customerDataRepository.save(customer);
                 return null;
             }
 
+            String type = nextNode.type() != null ? nextNode.type().toLowerCase() : "";
+            FlowDefinitionDTO.NodeData data = nextNode.data();
             List<String> sequence = new ArrayList<>();
-            String questionText = null;
             boolean requiresHandoff = false;
-            boolean pausedAtQuestion = false;
-            Set<String> visited = new HashSet<>();
 
-            while (!queue.isEmpty() && visited.size() < 30) {
-                String currId = queue.poll();
-                if (!visited.add(currId)) continue;
-
-                FlowDefinitionDTO.FlowNode node = getNodeById(flow, currId);
-                if (node == null) continue;
-
-                String type = node.type() != null ? node.type().toLowerCase() : "";
-                FlowDefinitionDTO.NodeData data = node.data();
-
-                if (type.contains("text") || type.contains("message")) {
-                    if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
-                        sequence.add("TEXT:" + data.text().trim());
-                    }
-                } else if (type.contains("image")) {
-                    if (data != null && data.imageUrl() != null && !data.imageUrl().trim().isEmpty()) {
-                        sequence.add("IMAGE:" + data.imageUrl().trim());
-                    }
-                } else if (type.contains("audio")) {
-                    if (data != null && data.audioUrl() != null && !data.audioUrl().trim().isEmpty()) {
-                        sequence.add("AUDIO:" + data.audioUrl().trim());
-                    }
-                } else if (type.contains("video")) {
-                    if (data != null && data.videoUrl() != null && !data.videoUrl().trim().isEmpty()) {
-                        sequence.add("VIDEO:" + data.videoUrl().trim());
-                    }
-                } else if (type.contains("question")) {
-                    if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
-                        questionText = data.text().trim();
-                        customer.setCurrentNodeId(currId);
-                        pausedAtQuestion = true;
-                        break; // Para imediatamente na pergunta e aguarda a resposta do cliente
-                    }
-                } else if (type.contains("handoff")) {
-                    requiresHandoff = true;
-                    customer.setCurrentNodeId("NLP_MODE");
-                    break; // Para imediatamente e transfere para atendimento humano
-                } else if (type.contains("extract")) {
-                    if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
-                        questionText = data.text().trim();
-                        customer.setCurrentNodeId(currId);
-                        pausedAtQuestion = true;
-                        break; // Para imediatamente para capturar o dado do CRM
-                    }
+            if (type.contains("text") || type.contains("message") || type.contains("question") || type.contains("extract")) {
+                if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
+                    sequence.add("TEXT:" + data.text().trim());
                 }
-
-                List<String> nextIds = getNextActiveConnectedNodes(flow, currId);
-                queue.addAll(nextIds);
-            }
-
-            if (questionText != null) {
-                sequence.add("TEXT:" + questionText);
-            }
-
-            if (!pausedAtQuestion && !requiresHandoff) {
+                customer.setCurrentNodeId(nextNode.id());
+            } else if (type.contains("image")) {
+                if (data != null && data.imageUrl() != null && !data.imageUrl().trim().isEmpty()) {
+                    sequence.add("IMAGE:" + data.imageUrl().trim());
+                }
+                customer.setCurrentNodeId(nextNode.id());
+            } else if (type.contains("audio")) {
+                if (data != null && data.audioUrl() != null && !data.audioUrl().trim().isEmpty()) {
+                    sequence.add("AUDIO:" + data.audioUrl().trim());
+                }
+                customer.setCurrentNodeId(nextNode.id());
+            } else if (type.contains("video")) {
+                if (data != null && data.videoUrl() != null && !data.videoUrl().trim().isEmpty()) {
+                    sequence.add("VIDEO:" + data.videoUrl().trim());
+                }
+                customer.setCurrentNodeId(nextNode.id());
+            } else if (type.contains("handoff")) {
+                requiresHandoff = true;
                 customer.setCurrentNodeId("NLP_MODE");
             }
+
             customerDataRepository.save(customer);
 
             if (sequence.isEmpty() && !requiresHandoff) return null;
 
             String fullSequence = String.join("|||", sequence);
-
             return new ChatResponseDTO(
                     fullSequence,
                     null,
@@ -189,15 +208,31 @@ public class FlowEngineService {
         return flow.nodes().stream().filter(n -> n.id().equals(id)).findFirst().orElse(null);
     }
 
-    private List<String> getNextActiveConnectedNodes(FlowDefinitionDTO flow, String currentId) {
-        return flow.edges().stream()
-                .filter(e -> e.sourceId() != null && e.sourceId().equals(currentId))
-                .map(FlowDefinitionDTO.FlowEdge::targetId)
-                .filter(targetId -> {
-                    FlowDefinitionDTO.FlowNode n = getNodeById(flow, targetId);
-                    if (n == null) return false;
-                    return n.data() == null || n.data().active() == null || n.data().active();
-                })
-                .toList();
+    private FlowDefinitionDTO.FlowNode findNextActiveNode(FlowDefinitionDTO flow, String currentId) {
+        String cursorId = currentId;
+        Set<String> visited = new HashSet<>();
+
+        while (visited.size() < 35) {
+            if (!visited.add(cursorId)) break;
+
+            String finalCursorId = cursorId;
+            Optional<FlowDefinitionDTO.FlowEdge> edgeOpt = flow.edges().stream()
+                    .filter(e -> e.sourceId() != null && e.sourceId().equals(finalCursorId))
+                    .findFirst();
+
+            if (edgeOpt.isEmpty()) return null;
+
+            FlowDefinitionDTO.FlowNode targetNode = getNodeById(flow, edgeOpt.get().targetId());
+            if (targetNode == null) return null;
+
+            boolean isActive = targetNode.data() == null || targetNode.data().active() == null || targetNode.data().active();
+            if (!isActive) {
+                cursorId = targetNode.id();
+                continue;
+            }
+
+            return targetNode;
+        }
+        return null;
     }
 }

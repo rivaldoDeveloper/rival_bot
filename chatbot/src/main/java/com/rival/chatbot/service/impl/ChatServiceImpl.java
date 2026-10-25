@@ -45,6 +45,7 @@ public class ChatServiceImpl implements ChatService {
     private final MetaSenderService metaSenderService;
     private final MetaAccountRepository metaAccountRepository;
     private final CloudinaryService cloudinaryService;
+    private final BotSettingsService botSettingsService;
 
     public ChatServiceImpl(ChatMessageRepository repository, ChatMapper chatMapper,
                            LocalVectorNlpService localVectorNlpService, DataExtractorService dataExtractorService,
@@ -53,7 +54,7 @@ public class ChatServiceImpl implements ChatService {
                            CustomerDataRepository customerDataRepository, WhatsAppSenderService whatsAppSenderService,
                            WhatsAppAccountRepository whatsAppAccountRepository,
                            MetaSenderService metaSenderService, MetaAccountRepository metaAccountRepository,
-                           CloudinaryService cloudinaryService) {
+                           CloudinaryService cloudinaryService,  BotSettingsService botSettingsService) {
         this.repository = repository;
         this.chatMapper = chatMapper;
         this.localVectorNlpService = localVectorNlpService;
@@ -68,6 +69,7 @@ public class ChatServiceImpl implements ChatService {
         this.metaSenderService = metaSenderService;
         this.metaAccountRepository = metaAccountRepository;
         this.cloudinaryService = cloudinaryService;
+        this.botSettingsService = botSettingsService;
     }
 
     @Override
@@ -209,11 +211,11 @@ public class ChatServiceImpl implements ChatService {
             return new ChatResponseDTO("", null, null, "BOT", false, LocalDateTime.now());
         }
 
-        if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
+        if (isHumanHandoff(tenantId, userTextContent)) return triggerHandoff(sessionId, tenantId);
 
         // Passa o tenantId para isolar as intenções NLP por empresa
         String localContext = localVectorNlpService.processAndMatch(sessionId, tenantId, userTextContent);
-        String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
+        String finalResponse = ownGenerativeAiService.generateOwnResponse(tenantId, userTextContent, localContext);
 
         saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
         return checkAudioCommandAndReturn(finalResponse);
@@ -230,19 +232,18 @@ public class ChatServiceImpl implements ChatService {
             return new ChatResponseDTO("", null, null, "BOT", false, LocalDateTime.now());
         }
 
-        if (isHumanHandoff(userTextContent)) return triggerHandoff(sessionId, tenantId);
+        if (isHumanHandoff(tenantId, userTextContent)) return triggerHandoff(sessionId, tenantId);
 
         ChatResponseDTO flowResponse = flowEngineService.processFlow(sessionId, tenantId, userTextContent, channel);
 
         if (flowResponse != null) {
             String rawResponse = flowResponse.response() != null ? flowResponse.response() : "";
-
             if (flowResponse.requiresHumanHandoff()) {
                 if (customer != null) {
                     customer.setIsAiActive(false);
                     customerDataRepository.save(customer);
                 }
-                String handoffMsg = "A transferir para um assistente humano...";
+                String handoffMsg = botSettingsService.getSettingsByTenant(tenantId).getFlowHandoffMessage();
                 if (rawResponse.isBlank()) {
                     rawResponse = "TEXT:" + handoffMsg;
                 } else if (!rawResponse.contains(handoffMsg)) {
@@ -257,7 +258,7 @@ public class ChatServiceImpl implements ChatService {
 
         log.info("Flow Engine cedeu o comando à NLP/IA. Processando a mensagem: '{}' (Tenant: {})", userTextContent, tenantId);
         String localContext = localVectorNlpService.processAndMatch(sessionId, tenantId, userTextContent);
-        String finalResponse = ownGenerativeAiService.generateOwnResponse(userTextContent, localContext);
+        String finalResponse = ownGenerativeAiService.generateOwnResponse(tenantId, userTextContent, localContext);
 
         saveBotResponse(sessionId, tenantId, finalResponse, "BOT");
 
@@ -288,13 +289,12 @@ public class ChatServiceImpl implements ChatService {
         repository.save(botEntity);
     }
 
-    private boolean isHumanHandoff(String userTextContent) {
-        String lower = userTextContent.toLowerCase();
-        return lower.contains("atendente") || lower.contains("humano") || lower.contains("suporte");
+    private boolean isHumanHandoff(UUID tenantId, String userTextContent) {
+        return botSettingsService.matchesHandoffKeyword(tenantId, userTextContent);
     }
 
     private ChatResponseDTO triggerHandoff(UUID sessionId, UUID tenantId) {
-        String handoffResponse = "Entendido! Estou transferindo seu atendimento para um operador humano.";
+        String handoffResponse = botSettingsService.getSettingsByTenant(tenantId).getHumanHandoffMessage();
         saveBotResponse(sessionId, tenantId, handoffResponse, "BOT");
         customerDataRepository.findBySessionId(sessionId).ifPresent(c -> {
             c.setIsAiActive(false);
