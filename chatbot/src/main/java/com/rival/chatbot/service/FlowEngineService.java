@@ -35,6 +35,7 @@ public class FlowEngineService {
                 .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
+    // Identifica palavras comuns que devem reiniciar o fluxo visual automaticamente
     private boolean isResetKeyword(String message) {
         if (message == null) return false;
         String lower = message.toLowerCase().trim();
@@ -137,19 +138,18 @@ public class FlowEngineService {
                         questionText = data.text().trim();
                         customer.setCurrentNodeId(currId);
                         pausedAtQuestion = true;
-                        continue;
+                        break; // Para imediatamente na pergunta e aguarda a resposta do cliente
                     }
                 } else if (type.contains("handoff")) {
                     requiresHandoff = true;
                     customer.setCurrentNodeId("NLP_MODE");
-                    continue;
+                    break; // Para imediatamente e transfere para atendimento humano
                 } else if (type.contains("extract")) {
-                    // Pausa o fluxo para pedir o dado ao cliente
                     if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
                         questionText = data.text().trim();
                         customer.setCurrentNodeId(currId);
                         pausedAtQuestion = true;
-                        continue;
+                        break; // Para imediatamente para capturar o dado do CRM
                     }
                 }
 
@@ -164,7 +164,6 @@ public class FlowEngineService {
             if (!pausedAtQuestion && !requiresHandoff) {
                 customer.setCurrentNodeId("NLP_MODE");
             }
-
             customerDataRepository.save(customer);
 
             if (sequence.isEmpty() && !requiresHandoff) return null;

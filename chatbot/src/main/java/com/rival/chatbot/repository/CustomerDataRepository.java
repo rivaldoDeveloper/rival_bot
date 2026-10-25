@@ -26,6 +26,8 @@ public interface CustomerDataRepository extends JpaRepository<CustomerDataEntity
     List<CustomerDataEntity> findByTenantId(UUID tenantId);
 
     @Query("SELECT c FROM CustomerDataEntity c WHERE " +
+            "SIZE(c.customData) > 0 AND " +
+            "(c.externalId IS NULL OR LOWER(c.externalId) NOT LIKE 'sim_%') AND " +
             "(:search IS NULL OR :search = '' OR " +
             "LOWER(COALESCE(c.name, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
             "LOWER(COALESCE(c.externalId, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
@@ -33,6 +35,8 @@ public interface CustomerDataRepository extends JpaRepository<CustomerDataEntity
     Page<CustomerDataEntity> searchCustomers(@Param("search") String search, Pageable pageable);
 
     @Query("SELECT c FROM CustomerDataEntity c WHERE c.tenantId = :tenantId AND " +
+            "SIZE(c.customData) > 0 AND " +
+            "(c.externalId IS NULL OR LOWER(c.externalId) NOT LIKE 'sim_%') AND " +
             "(:search IS NULL OR :search = '' OR " +
             "LOWER(COALESCE(c.name, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
             "LOWER(COALESCE(c.externalId, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
