@@ -41,17 +41,19 @@
 
 server:
   port: 8083
+
 spring:
   application:
     name: chatbot-api
   datasource:
-    url: ${JDBC_POSTGRES:jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require}
+    url: ${JDBC_POSTGRES:jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require&reWriteBatchedInserts=true}
     username: ${NEON_DB_USER:neondb_owner}
     password: ${NEON_DB_PASSWORD:npg_lZhcVq9WadG0}
     driver-class-name: org.postgresql.Driver
     hikari:
       max-lifetime: 240000 # 4 minutos (menor que o limite do NeonDB)
       keepalive-time: 30000
+      maximum-pool-size: 15
   servlet:
     multipart:
       max-file-size: 50MB
@@ -59,12 +61,15 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
         dialect: org.hibernate.dialect.PostgreSQLDialect
-
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
   ai:
     openai:
       api-key: ${GEMINI_API_KEY:chave_ficticia_teste}

@@ -20,14 +20,13 @@ public class OwnGenerativeAiService {
         this.botSettingsService = botSettingsService;
     }
 
-    // Sobrecarga para retrocompatibilidade
     public String generateOwnResponse(String userPrompt, String retrievedContext) {
         return generateOwnResponse(null, userPrompt, retrievedContext);
     }
 
     /**
-     * Motor Sintetizador NLP em Java Puro.
-     * Analisa a frase do usuário e formata a resposta baseada no conhecimento do PostgreSQL.
+     * Motor Sintetizador Conversacional Estilo Gemini.
+     * Combina múltiplos contextos da NLP e adapta o tom da resposta com naturalidade.
      */
     public String generateOwnResponse(UUID tenantId, String userPrompt, String retrievedContext) {
         BotSettingsEntity settings = botSettingsService.getSettingsByTenant(tenantId);
@@ -44,56 +43,68 @@ public class OwnGenerativeAiService {
             return generateDynamicFallback(userPrompt, settings);
         }
 
-        return synthesizeNaturalResponse(userPrompt, retrievedContext);
+        return synthesizeGeminiStyleResponse(userPrompt, retrievedContext);
     }
 
-    private String synthesizeNaturalResponse(String userPrompt, String databaseContext) {
+    private String synthesizeGeminiStyleResponse(String userPrompt, String databaseContext) {
         String lowerPrompt = userPrompt.toLowerCase().trim();
-        String cleanContext = databaseContext.trim();
+        String[] contextParts = databaseContext.split("\\|\\|NLP_MULTI\\|\\|");
 
-        // 1. Identificação de Intenção e Sentimento
-        boolean isQuestion = lowerPrompt.contains("?") || lowerPrompt.matches(".*\\b(como|qual|onde|por que|quanto|quando)\\b.*");
-        boolean isConfirmation = lowerPrompt.matches("^(sim|ok|certo|entendi|perfeito).*");
-
+        String primaryPart = ensureProperPunctuation(contextParts[0].trim());
         StringBuilder response = new StringBuilder();
 
-        // 2. Montagem Dinâmica de Frase
-        if (isConfirmation) {
-            response.append("Maravilha! ");
+        // 1. Se o utilizador começou com uma saudação + pergunta (e a resposta já não começa com saudação),
+        // adiciona uma abertura calorosa natural estilo Gemini
+        boolean userGreeted = lowerPrompt.matches("^(oi|olá|ola|bom dia|boa tarde|boa noite|opa|e ai|hey|hello|hola)\\b.*");
+        boolean responseAlreadyGreets = primaryPart.toLowerCase().matches("^(oi|olá|ola|bom dia|boa tarde|boa noite|bem-vindo|seja bem).*");
+        boolean isMultiWordPrompt = lowerPrompt.split("\\s+").length >= 3;
+
+        if (userGreeted && isMultiWordPrompt && !responseAlreadyGreets) {
+            if (lowerPrompt.startsWith("bom dia")) {
+                response.append("Bom dia! ");
+            } else if (lowerPrompt.startsWith("boa tarde")) {
+                response.append("Boa tarde! ");
+            } else if (lowerPrompt.startsWith("boa noite")) {
+                response.append("Boa noite! ");
+            } else {
+                response.append("Olá! ");
+            }
         }
 
-        // 3. Estruturação do contexto do banco
-        String formattedContext = cleanContext.substring(0, 1).toUpperCase() + cleanContext.substring(1);
+        // 2. Adiciona a resposta principal da diretriz exatamente com a fluidez que o cliente treinou
+        response.append(primaryPart);
 
-        if (isQuestion) {
-            response.append("Sobre sua dúvida: ").append(formattedContext.substring(0, 1).toLowerCase()).append(formattedContext.substring(1));
-        } else {
-            response.append(formattedContext);
-        }
-
-        // 4. Fechamento conversacional
-        if (!response.toString().endsWith(".") && !response.toString().endsWith("!") && !response.toString().endsWith("?")) {
-            response.append(".");
+        // 3. Se o motor detectou uma 2ª intenção na mesma mensagem do utilizador, conecta de forma inteligente!
+        if (contextParts.length > 1 && !contextParts[1].isBlank()) {
+            String secondPart = ensureProperPunctuation(contextParts[1].trim());
+            // Remove perguntas de fechamento genéricas da primeira parte se houver uma segunda parte complementar
+            response.append("\n\nAlém disso, ").append( Character.toLowerCase(secondPart.charAt(0)) ).append(secondPart.substring(1));
         }
 
         return response.toString();
     }
 
+    private String ensureProperPunctuation(String text) {
+        if (text == null || text.isBlank()) return "";
+        String clean = text.trim();
+        clean = Character.toUpperCase(clean.charAt(0)) + clean.substring(1);
+        if (!clean.endsWith(".") && !clean.endsWith("!") && !clean.endsWith("?") && !clean.endsWith(":")) {
+            clean += ".";
+        }
+        return clean;
+    }
+
     private String generateDynamicFallback(String userPrompt, BotSettingsEntity settings) {
         List<String> tokens = Arrays.asList(userPrompt.toLowerCase().split("[\\s\\p{Punct}]+"));
 
-        // Extrai palavras-chave ignorando preposições e palavras curtas
         List<String> keywords = tokens.stream()
-                .filter(w -> w.length() > 3 && !w.equals("como") && !w.equals("qual") && !w.equals("quero"))
+                .filter(w -> w.length() > 3 && !w.equals("como") && !w.equals("qual") && !w.equals("quero") && !w.equals("voces") && !w.equals("voce"))
                 .collect(Collectors.toList());
 
-        // TRAVA DE SEGURANÇA: Se o texto for muito longo (mais de 3 palavras-chave),
-        // damos uma resposta educada sem repetir o testamento do cliente.
         if (keywords.size() > 3) {
             return settings.getFallbackLongMessage();
         }
 
-        // Se for uma pergunta curta (ex: "tem garagem?"), ele repete o assunto de forma natural
         if (!keywords.isEmpty()) {
             String subject = String.join(" ", keywords);
             String template = settings.getFallbackShortMessage();

@@ -41,6 +41,13 @@ public class FlowEngineService {
         return botSettingsService.matchesResetKeyword(tenantId, message);
     }
 
+    private boolean isExplicitRestartCommand(String message) {
+        if (message == null || message.isBlank()) return false;
+        String lower = message.toLowerCase().trim();
+        return List.of("menu", "inicio", "início", "reiniciar", "recomecar", "recomeçar", "voltar", "start", "/start")
+                .contains(lower);
+    }
+
     /**
      * Verifica se a entrada é inválida/sem sentido (ex: "45464646466" ou apenas símbolos)
      * quando o fluxo espera uma resposta conversacional normal (e não uma extração de CPF/Telefone).
@@ -66,7 +73,7 @@ public class FlowEngineService {
 
         // Ruído de teclado sem vogais (ex: "asdfghjkl", "bcdfgh")
         String onlyLetters = clean.replaceAll("[^\\p{L}]", "").toLowerCase();
-        if (onlyLetters.length() >= 5 && !onlyLetters.matches(".*[aeiouáéíóúâêôãõ].*")) {
+        if (onlyLetters.length() >= 5 && !onlyLetters.matches(".*[aeiouáéíóúâêîôûãõàçy].*")) {
             return true;
         }
 
@@ -76,8 +83,8 @@ public class FlowEngineService {
     public ChatResponseDTO processFlow(UUID sessionId, UUID tenantId, String userMessage, String channel) {
         try {
             String currentChannel = (channel != null && !channel.isBlank()) ? channel : "WHATSAPP";
-
             Optional<FlowConfigEntity> activeFlowOpt = flowConfigRepository.findFirstByTenantIdAndChannelAndActiveTrue(tenantId, currentChannel);
+
             if (activeFlowOpt.isEmpty()) return null;
 
             FlowDefinitionDTO flow = objectMapper.readValue(activeFlowOpt.get().getFlowDataJson(), FlowDefinitionDTO.class);
@@ -92,27 +99,26 @@ public class FlowEngineService {
 
             String currentNodeId = customer.getCurrentNodeId();
 
-            // 1. Se o cliente mandou uma palavra de reinício ("oi", "olá", "menu"), reinicia o fluxo do zero
-            if (isStartOrResetKeyword(tenantId, userMessage)) {
+            // 1. Reinício explícito ("menu", "voltar") ou nova saudação após o fim do fluxo ("NLP_MODE")
+            if (isExplicitRestartCommand(userMessage) || ("NLP_MODE".equals(currentNodeId) && isStartOrResetKeyword(tenantId, userMessage))) {
                 currentNodeId = null;
                 customer.setCurrentNodeId(null);
             }
 
-            // 2. Se ainda não iniciou o fluxo (currentNodeId == null) mas a pessoa NÃO mandou uma saudação/gatilho
-            // (ex: mandou "45464646466" ou fez uma pergunta direta para a NLP), cede para a NLP/Fallback!
+            // 2. Se ainda não iniciou o fluxo, verifica se a mensagem é um gatilho inicial ("oi", "olá")
             if (currentNodeId == null || currentNodeId.isBlank()) {
                 if (!isStartOrResetKeyword(tenantId, userMessage)) {
-                    log.info("Mensagem '{}' não é um gatilho de início de fluxo. Encaminhando para análise NLP/Fallback.", userMessage);
+                    log.info("Mensagem '{}' não é gatilho inicial de fluxo. Encaminhando para NLP/Fallback.", userMessage);
                     return null;
                 }
             }
 
-            // 3. Se já terminou o fluxo visual e está em NLP_MODE, cede para a NLP
+            // 3. Se já concluiu o fluxo visual, cede para a NLP
             if ("NLP_MODE".equals(currentNodeId)) {
                 return null;
             }
 
-            // 4. Verifica o nó em que o utilizador estava parado
+            // 4. Verifica o nó onde o utilizador estava parado esperando resposta (question ou extract)
             FlowDefinitionDTO.FlowNode lastNode = (currentNodeId != null) ? getNodeById(flow, currentNodeId) : null;
             boolean isLastNodeExtract = lastNode != null && "extract".equalsIgnoreCase(lastNode.type());
 
@@ -130,57 +136,86 @@ public class FlowEngineService {
                 );
             }
 
-            // 5. Se estava num bloco 'extract' e o dado é válido, salva no CRM
+            // 5. Se estava parado num bloco 'extract', salva a resposta do cliente no CRM
             if (isLastNodeExtract && lastNode.data() != null && lastNode.data().fieldToExtract() != null) {
                 dataExtractorService.saveCustomField(sessionId, lastNode.data().fieldToExtract(), userMessage);
             }
 
-            // 6. Determina o ponto de partida para buscar o próximo passo
-            String startNodeId = currentNodeId;
-            if (startNodeId == null || startNodeId.isBlank()) {
+            // 6. Define o ponto de partida
+            String cursorNodeId = currentNodeId;
+            if (cursorNodeId == null || cursorNodeId.isBlank()) {
                 Optional<FlowDefinitionDTO.FlowNode> trigger = flow.nodes().stream()
                         .filter(n -> n.type() != null && n.type().toLowerCase().contains("trigger"))
                         .findFirst();
                 if (trigger.isEmpty()) return null;
-                startNodeId = trigger.get().id();
+                cursorNodeId = trigger.get().id();
             }
 
-            // 7. Avança 1 passo ativo por turno de conversa
-            FlowDefinitionDTO.FlowNode nextNode = findNextActiveNode(flow, startNodeId);
-
-            if (nextNode == null) {
-                customer.setCurrentNodeId("NLP_MODE");
-                customerDataRepository.save(customer);
-                return null;
-            }
-
-            String type = nextNode.type() != null ? nextNode.type().toLowerCase() : "";
-            FlowDefinitionDTO.NodeData data = nextNode.data();
+            // 7. EXECUÇÃO EM CADEIA RESPEITANDO O TIPO DE CADA NODE:
+            // - Nodes de envio ('text', 'image', 'audio', 'video') disparam e avançam automaticamente para o próximo!
+            // - Nodes de espera ('question', 'extract') enviam a pergunta e PAUSAM o fluxo esperando a resposta do cliente!
+            // - Node 'handoff' transfere para humano e encerra.
             List<String> sequence = new ArrayList<>();
             boolean requiresHandoff = false;
+            Set<String> visitedInTurn = new HashSet<>();
+            boolean pausedForUserInput = false;
 
-            if (type.contains("text") || type.contains("message") || type.contains("question") || type.contains("extract")) {
-                if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
-                    sequence.add("TEXT:" + data.text().trim());
+            while (visitedInTurn.size() < 25) {
+                FlowDefinitionDTO.FlowNode nextNode = findNextActiveNode(flow, cursorNodeId);
+
+                if (nextNode == null) {
+                    // Fim da linha: não há mais blocos conectados depois deste
+                    customer.setCurrentNodeId("NLP_MODE");
+                    break;
                 }
-                customer.setCurrentNodeId(nextNode.id());
-            } else if (type.contains("image")) {
-                if (data != null && data.imageUrl() != null && !data.imageUrl().trim().isEmpty()) {
-                    sequence.add("IMAGE:" + data.imageUrl().trim());
+
+                if (!visitedInTurn.add(nextNode.id())) {
+                    break; // Evita loop infinito se o utilizador ligar uma seta para trás
                 }
-                customer.setCurrentNodeId(nextNode.id());
-            } else if (type.contains("audio")) {
-                if (data != null && data.audioUrl() != null && !data.audioUrl().trim().isEmpty()) {
-                    sequence.add("AUDIO:" + data.audioUrl().trim());
+
+                String type = nextNode.type() != null ? nextNode.type().toLowerCase() : "";
+                FlowDefinitionDTO.NodeData data = nextNode.data();
+
+                if (type.contains("question") || type.contains("extract")) {
+                    // BLOCO INTERATIVO: Envia a pergunta e PAUSA neste node esperando o utilizador responder!
+                    if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
+                        sequence.add("TEXT:" + data.text().trim());
+                    }
+                    customer.setCurrentNodeId(nextNode.id());
+                    pausedForUserInput = true;
+                    break;
+                } else if (type.contains("text") || type.contains("message")) {
+                    // BLOCO DE MENSAGEM SIMPLES: Envia o texto e CONTINUA avançando para o próximo node!
+                    if (data != null && data.text() != null && !data.text().trim().isEmpty()) {
+                        sequence.add("TEXT:" + data.text().trim());
+                    }
+                    cursorNodeId = nextNode.id();
+                } else if (type.contains("image")) {
+                    if (data != null && data.imageUrl() != null && !data.imageUrl().trim().isEmpty()) {
+                        sequence.add("IMAGE:" + data.imageUrl().trim());
+                    }
+                    cursorNodeId = nextNode.id();
+                } else if (type.contains("audio")) {
+                    if (data != null && data.audioUrl() != null && !data.audioUrl().trim().isEmpty()) {
+                        sequence.add("AUDIO:" + data.audioUrl().trim());
+                    }
+                    cursorNodeId = nextNode.id();
+                } else if (type.contains("video")) {
+                    if (data != null && data.videoUrl() != null && !data.videoUrl().trim().isEmpty()) {
+                        sequence.add("VIDEO:" + data.videoUrl().trim());
+                    }
+                    cursorNodeId = nextNode.id();
+                } else if (type.contains("handoff")) {
+                    requiresHandoff = true;
+                    customer.setCurrentNodeId("NLP_MODE");
+                    pausedForUserInput = true;
+                    break;
+                } else {
+                    cursorNodeId = nextNode.id();
                 }
-                customer.setCurrentNodeId(nextNode.id());
-            } else if (type.contains("video")) {
-                if (data != null && data.videoUrl() != null && !data.videoUrl().trim().isEmpty()) {
-                    sequence.add("VIDEO:" + data.videoUrl().trim());
-                }
-                customer.setCurrentNodeId(nextNode.id());
-            } else if (type.contains("handoff")) {
-                requiresHandoff = true;
+            }
+
+            if (!pausedForUserInput) {
                 customer.setCurrentNodeId("NLP_MODE");
             }
 
@@ -216,6 +251,7 @@ public class FlowEngineService {
             if (!visited.add(cursorId)) break;
 
             String finalCursorId = cursorId;
+
             Optional<FlowDefinitionDTO.FlowEdge> edgeOpt = flow.edges().stream()
                     .filter(e -> e.sourceId() != null && e.sourceId().equals(finalCursorId))
                     .findFirst();
