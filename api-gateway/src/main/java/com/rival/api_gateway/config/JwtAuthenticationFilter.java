@@ -44,6 +44,7 @@ public class JwtAuthenticationFilter implements GlobalFilter {
                 path.contains("/api/v1/chat/send") ||
                 path.contains("/api/v1/chat/history") ||
                 path.contains("/api/v1/files/upload") ||
+                path.contains("/api/v1/nlp/training/fetch-json") ||
                 path.contains("/webhook") ||
                 path.contains("/widget") ||
                 path.contains("/ws-chat")) {
@@ -68,6 +69,7 @@ public class JwtAuthenticationFilter implements GlobalFilter {
 
         try {
             SecretKey key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+
             Claims claims = Jwts.parser()
                     .verifyWith(key)
                     .build()
@@ -77,11 +79,38 @@ public class JwtAuthenticationFilter implements GlobalFilter {
             String tenantId = claims.get("tenantId", String.class);
             String userId = claims.get("userId", String.class);
 
-            ServerHttpRequest.Builder builder = request.mutate();
-            if (tenantId != null) builder.header("X-Tenant-Id", tenantId);
-            if (userId != null) builder.header("X-User-Id", userId);
+            // Fallback: si el JWT guarda el UUID en 'id' o 'sub'
+            if (tenantId == null || tenantId.isBlank()) {
+                tenantId = claims.get("id", String.class);
+            }
+            if (tenantId == null || tenantId.isBlank()) {
+                String sub = claims.getSubject();
+                if (sub != null && sub.matches("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")) {
+                    tenantId = sub;
+                }
+            }
 
-            return chain.filter(exchange.mutate().request(builder.build()).build());
+            final String finalTenantId = tenantId;
+            final String finalUserId = userId;
+
+            ServerHttpRequest mutatedRequest = request.mutate()
+                    .headers(httpHeaders -> {
+                        // Elimina cualquier X-Tenant-Id vacío enviado por el frontend que causaría 400 Bad Request
+                        String existingTenant = httpHeaders.getFirst("X-Tenant-Id");
+                        if (existingTenant != null && existingTenant.isBlank()) {
+                            httpHeaders.remove("X-Tenant-Id");
+                        }
+                        if (finalTenantId != null && !finalTenantId.isBlank()) {
+                            httpHeaders.set("X-Tenant-Id", finalTenantId);
+                        }
+                        if (finalUserId != null && !finalUserId.isBlank()) {
+                            httpHeaders.set("X-User-Id", finalUserId);
+                        }
+                    })
+                    .build();
+
+            return chain.filter(exchange.mutate().request(mutatedRequest).build());
+
         } catch (Exception e) {
             log.error("Erro na validação do JWT no Gateway na rota {}: {}", path, e.getMessage());
             exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
