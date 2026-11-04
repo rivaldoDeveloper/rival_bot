@@ -71,8 +71,6 @@ public class ChatController {
             }
             File tempFile = new File(tempDir, UUID.randomUUID() + "_" + file.getOriginalFilename());
             file.transferTo(tempFile);
-            log.info("Arquivo de áudio salvo com sucesso em: {}", tempFile.getAbsolutePath());
-
             ChatResponseDTO response = chatService.processAudioFileMessage(sessionId, tenantId, tempFile);
             return ResponseEntity.ok(response);
         } catch (Exception e) {

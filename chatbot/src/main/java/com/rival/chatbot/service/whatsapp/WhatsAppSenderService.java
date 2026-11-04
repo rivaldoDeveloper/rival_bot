@@ -34,6 +34,7 @@ public class WhatsAppSenderService {
     @Async("taskExecutor")
     public void sendMessage(String instanceName, String apikey, String toPhoneNumber, String messageText) {
         if (messageText == null || messageText.isBlank()) return;
+
         String url = evolutionApiUrl + "/message/sendText/" + instanceName;
 
         HttpHeaders headers = new HttpHeaders();
@@ -44,7 +45,8 @@ public class WhatsAppSenderService {
         body.put("number", toPhoneNumber);
         body.put("text", messageText);
 
-        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+        var request = new HttpEntity<Object>(body, headers);
+
         try {
             ResponseEntity<String> response = restTemplate.postForEntity(url, request, String.class);
             log.info("Mensagem de texto enviada via Evolution API. Status: {}", response.getStatusCode());
@@ -88,7 +90,7 @@ public class WhatsAppSenderService {
                 if (caption != null && !caption.isBlank()) body.put("caption", caption);
             }
 
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            var request = new HttpEntity<Object>(body, headers);
             restTemplate.postForEntity(endpoint, request, String.class);
             log.info("Mídia via URL enviada com sucesso para o WhatsApp.");
         } catch (Exception e) {
@@ -134,7 +136,7 @@ public class WhatsAppSenderService {
                 }
             }
 
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            var request = new HttpEntity<Object>(body, headers);
             restTemplate.postForEntity(url, request, String.class);
             log.info("Mídia local enviada via WhatsApp.");
         } catch (Exception e) {
