@@ -37,6 +37,9 @@ public class BotSettingsService {
             return n;
         });
 
+        if (incoming.getUiLanguage() != null && !incoming.getUiLanguage().isBlank()) {
+            entity.setUiLanguage(incoming.getUiLanguage().trim().toLowerCase());
+        }
         if (incoming.getUntrainMessage() != null) entity.setUntrainMessage(incoming.getUntrainMessage().trim());
         if (incoming.getFallbackShortMessage() != null) entity.setFallbackShortMessage(incoming.getFallbackShortMessage().trim());
         if (incoming.getFallbackLongMessage() != null) entity.setFallbackLongMessage(incoming.getFallbackLongMessage().trim());
@@ -54,7 +57,6 @@ public class BotSettingsService {
         String lower = message.toLowerCase().trim();
         BotSettingsEntity settings = getSettingsByTenant(tenantId);
         String kwStr = settings.getHandoffKeywords() != null ? settings.getHandoffKeywords() : "atendente, humano, suporte";
-
         return Arrays.stream(kwStr.split(","))
                 .map(k -> k.trim().toLowerCase())
                 .filter(k -> !k.isEmpty())

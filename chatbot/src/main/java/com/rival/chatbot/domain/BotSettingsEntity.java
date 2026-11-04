@@ -16,6 +16,9 @@ public class BotSettingsEntity {
     @Column(nullable = false, unique = true)
     private UUID tenantId;
 
+    @Column(length = 5)
+    private String uiLanguage = "pt";
+
     @Column(columnDefinition = "TEXT")
     private String untrainMessage = "Ainda não tenho diretrizes cadastradas. Como posso ajudar?";
 
@@ -47,6 +50,9 @@ public class BotSettingsEntity {
 
     public UUID getTenantId() { return tenantId; }
     public void setTenantId(UUID tenantId) { this.tenantId = tenantId; }
+
+    public String getUiLanguage() { return uiLanguage != null ? uiLanguage : "pt"; }
+    public void setUiLanguage(String uiLanguage) { this.uiLanguage = uiLanguage; }
 
     public String getUntrainMessage() { return untrainMessage; }
     public void setUntrainMessage(String untrainMessage) { this.untrainMessage = untrainMessage; }
