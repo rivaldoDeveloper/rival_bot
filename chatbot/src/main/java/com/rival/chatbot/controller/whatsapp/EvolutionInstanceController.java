@@ -13,6 +13,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/whatsapp/instances")
 @Tag(name = "WhatsApp Evolution Instances", description = "Endpoints de operacao e conexao de instancias do WhatsApp (Baileys) via Evolution API")
+@SuppressWarnings({"rawtypes", "unchecked"})
 public class EvolutionInstanceController {
 
     private final EvolutionInstanceService evolutionInstanceService;
@@ -23,46 +24,68 @@ public class EvolutionInstanceController {
 
     @Operation(summary = "Criar Instancia e Gerar QR", description = "Inicia uma nova sessao na Evolution API e devolve o QR Code em base64.")
     @PostMapping("/create")
-    public ResponseEntity<Map<String, String>> createInstanceAndGetQR(@RequestParam UUID tenantId) {
+    public ResponseEntity createInstanceAndGetQR(@RequestParam UUID tenantId) {
         String base64Qr = evolutionInstanceService.createInstanceAndGetQR(tenantId);
-        Map<String, String> response = new HashMap<>();
+        Map response = new HashMap();
         response.put("qrCodeBase64", base64Qr);
         return ResponseEntity.ok(response);
     }
 
     @Operation(summary = "Obter Novo QR Code", description = "Atualiza o QR Code caso o anterior tenha expirado durante a tentativa de conexao.")
     @GetMapping("/qr/{tenantId}")
-    public ResponseEntity<Map<String, String>> getFreshQR(@PathVariable UUID tenantId) {
+    public ResponseEntity getFreshQR(@PathVariable UUID tenantId) {
         String base64Qr = evolutionInstanceService.getFreshQR(tenantId);
-        Map<String, String> response = new HashMap<>();
+        Map response = new HashMap();
         response.put("qrCodeBase64", base64Qr);
         return ResponseEntity.ok(response);
     }
 
+    @Operation(summary = "Verificar Status da Conexao", description = "Consulta na Evolution API se a instancia do tenant ja esta conectada (open).")
+    @GetMapping("/status/{tenantId}")
+    public ResponseEntity getStatusByPath(@PathVariable UUID tenantId) {
+        return ResponseEntity.ok(evolutionInstanceService.getConnectionStatus(tenantId));
+    }
+
+    @Operation(summary = "Verificar Status da Conexao (Query)", description = "Consulta na Evolution API se a instancia do tenant ja esta conectada (open).")
+    @GetMapping("/status")
+    public ResponseEntity getStatusByQuery(
+            @RequestParam(required = false) UUID tenantId,
+            @RequestHeader(value = "X-Tenant-Id", required = false) UUID headerTenantId) {
+        UUID target = tenantId != null ? tenantId : headerTenantId;
+        if (target == null) {
+            Map disconnected = new HashMap();
+            disconnected.put("connected", false);
+            disconnected.put("state", "close");
+            disconnected.put("status", "DISCONNECTED");
+            return ResponseEntity.ok(disconnected);
+        }
+        return ResponseEntity.ok(evolutionInstanceService.getConnectionStatus(target));
+    }
+
     @Operation(summary = "Ativar Bot (Webhook)", description = "Mapeia as rotas de webhook na Evolution API para comecar a ouvir mensagens deste numero.")
     @PostMapping("/activate-bot")
-    public ResponseEntity<Map<String, String>> activateBot(@RequestParam UUID tenantId) {
+    public ResponseEntity activateBot(@RequestParam UUID tenantId) {
         evolutionInstanceService.activateBot(tenantId);
-        Map<String, String> response = new HashMap<>();
-        response.put("message", "Robô ativado com sucesso!");
+        Map response = new HashMap();
+        response.put("message", "Robo ativado com sucesso!");
         return ResponseEntity.ok(response);
     }
 
     @Operation(summary = "Desconectar Instancia", description = "Exclui a sessao da Evolution API e desvincula o WhatsApp.")
-    @DeleteMapping("/logout/{tenantId}")
-    public ResponseEntity<Map<String, String>> logoutInstance(@PathVariable UUID tenantId) {
+    @RequestMapping(value = "/logout/{tenantId}", method = {RequestMethod.DELETE, RequestMethod.POST})
+    public ResponseEntity logoutInstance(@PathVariable UUID tenantId) {
         evolutionInstanceService.logoutInstance(tenantId);
-        Map<String, String> response = new HashMap<>();
+        Map response = new HashMap();
         response.put("message", "Desconectado com sucesso. Pode gerar um novo QR Code.");
         return ResponseEntity.ok(response);
     }
 
     @Operation(summary = "Emparelhar por Numero (Pairing Code)", description = "Cria uma instancia usando o numero de telefone para gerar o codigo nativo de pareamento do WhatsApp.")
     @PostMapping("/pairing-code")
-    public ResponseEntity<Map<String, String>> getPairingCode(@RequestParam UUID tenantId, @RequestParam String phoneNumber) {
+    public ResponseEntity getPairingCode(@RequestParam UUID tenantId, @RequestParam String phoneNumber) {
         String pairingCode = evolutionInstanceService.getPairingCode(tenantId, phoneNumber);
-        Map<String, String> response = new HashMap<>();
-        response.put("code", pairingCode != null ? pairingCode : "CÓDIGO_NÃO_GERADO");
+        Map response = new HashMap();
+        response.put("code", pairingCode != null ? pairingCode : "CODIGO_NAO_GERADO");
         return ResponseEntity.ok(response);
     }
 }

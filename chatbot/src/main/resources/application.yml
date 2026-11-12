@@ -45,19 +45,26 @@ server:
 spring:
   application:
     name: chatbot-api
+
   datasource:
-    url: ${JDBC_POSTGRES:jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require&reWriteBatchedInserts=true}
+    url: ${JDBC_POSTGRES:jdbc:postgresql://ep-still-union-ae9q1fgu-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&reWriteBatchedInserts=true&connectTimeout=60&socketTimeout=60&loginTimeout=60}
     username: ${NEON_DB_USER:neondb_owner}
     password: ${NEON_DB_PASSWORD:npg_lZhcVq9WadG0}
     driver-class-name: org.postgresql.Driver
     hikari:
-      max-lifetime: 240000 # 4 minutos (menor que o limite do NeonDB)
+      connection-timeout: 60000
+      validation-timeout: 10000
+      max-lifetime: 240000
       keepalive-time: 30000
-      maximum-pool-size: 15
+      minimum-idle: 1
+      maximum-pool-size: 5
+      initialization-fail-timeout: 60000
+
   servlet:
     multipart:
       max-file-size: 50MB
       max-request-size: 50MB
+
   jpa:
     hibernate:
       ddl-auto: update
@@ -65,11 +72,11 @@ spring:
     properties:
       hibernate:
         format_sql: false
-        dialect: org.hibernate.dialect.PostgreSQLDialect
         jdbc:
           batch_size: 50
         order_inserts: true
         order_updates: true
+
   ai:
     openai:
       api-key: ${GEMINI_API_KEY:chave_ficticia_teste}
@@ -96,3 +103,10 @@ cloudinary:
   cloud-name: ${CLOUDINARY_CLOUD_NAME:dltdpep6k}
   api-key: ${CLOUDINARY_API_KEY:956284529795669}
   api-secret: ${CLOUDINARY_API_SECRET:vUdN9rfiIbSVSZEoeRz_RvahtRA}
+
+evolution:
+  api:
+    url: ${EVOLUTION_API_URL:http://localhost:8085}
+    global-apikey: ${EVOLUTION_GLOBAL_APIKEY:sua_chave_global_aqui}
+  webhook:
+    base-url: ${EVOLUTION_WEBHOOK_BASE_URL:http://host.docker.internal:8083}

@@ -24,7 +24,7 @@ public class WhatsAppSenderService {
     private static final Logger log = LoggerFactory.getLogger(WhatsAppSenderService.class);
     private final RestTemplate restTemplate;
 
-    @Value("${evolution.api.url:http://localhost:8081}")
+    @Value("${evolution.api.url}")
     private String evolutionApiUrl;
 
     public WhatsAppSenderService() {

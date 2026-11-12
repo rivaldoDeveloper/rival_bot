@@ -13,17 +13,22 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 @Service
+@SuppressWarnings({"rawtypes", "unchecked"})
 public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
     private static final Logger log = LoggerFactory.getLogger(WhatsAppWebhookServiceImpl.class);
@@ -34,8 +39,11 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private final CustomerDataRepository customerDataRepository;
 
     // Para chamar a Evolution API e baixar a mídia
-    @Value("${evolution.api.url:http://localhost:8081}")
+    @Value("${evolution.api.url}")
     private String evolutionApiUrl;
+
+    @Value("${evolution.api.global-apikey}")
+    private String globalApiKey;
 
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -50,15 +58,54 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
-    public void processWebhookPayload(String instanceName, Map<String, Object> payload) {
+    @Transactional
+    public void processWebhookPayload(String instanceName, Map payload) {
         try {
-            if (!"messages.upsert".equals(payload.get("event"))) return;
+            String event = payload.get("event") != null ? String.valueOf(payload.get("event")).toLowerCase() : "";
 
-            Map<String, Object> data = (Map<String, Object>) payload.get("data");
+            // 1. DETECTA DESCONEXAO FEITA PELO CELULAR EM TEMPO REAL
+            if (event.contains("connection") || event.contains("status")) {
+                Map data = payload.get("data") instanceof Map ? (Map) payload.get("data") : payload;
+                String state = data.get("state") != null ? String.valueOf(data.get("state")) : "";
+                String status = data.get("status") != null ? String.valueOf(data.get("status")) : "";
+                String statusReason = data.get("statusReason") != null ? String.valueOf(data.get("statusReason")) : "";
+
+                log.info("Webhook Connection Event [{}]: state={}, status={}, reason={}", instanceName, state, status, statusReason);
+
+                if ("close".equalsIgnoreCase(state)
+                        || "refused".equalsIgnoreCase(state)
+                        || "close".equalsIgnoreCase(status)
+                        || "401".equals(statusReason)
+                        || "loggedOut".equalsIgnoreCase(statusReason)) {
+
+                    whatsAppAccountRepository.findByInstanceName(instanceName).ifPresent(acc -> {
+                        // Só apaga se ja estava conectado antes (evita apagar enquanto esta gerando QR code)
+                        if (acc.getDisplayPhoneNumber() != null && acc.getDisplayPhoneNumber().startsWith("Conectado")) {
+                            log.info("Celular desconectou a sessao! Limpando instancia {} imediatamente.", instanceName);
+                            whatsAppAccountRepository.delete(acc);
+                            whatsAppAccountRepository.flush();
+                            try {
+                                HttpHeaders headers = new HttpHeaders();
+                                headers.set("apikey", globalApiKey);
+                                restTemplate.exchange(
+                                        evolutionApiUrl + "/instance/delete/" + instanceName,
+                                        HttpMethod.DELETE,
+                                        new HttpEntity(headers),
+                                        String.class
+                                );
+                            } catch (Exception ignored) {}
+                        }
+                    });
+                }
+                return;
+            }
+
+            if (!"messages.upsert".equals(event)) return;
+
+            Map data = (Map) payload.get("data");
             if (data == null) return;
 
-            Map<String, Object> msgObject = data.containsKey("message") ? (Map<String, Object>) data.get("message") : data;
+            Map msgObject = data.containsKey("message") ? (Map) data.get("message") : data;
 
             String userPhoneNumber = extractPhoneNumber(data, msgObject);
             Boolean fromMe = extractFromMe(data, msgObject);
@@ -68,7 +115,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
 
             WhatsAppAccountEntity account = whatsAppAccountRepository.findByInstanceName(instanceName)
-                    .orElseThrow(() -> new IllegalArgumentException("Instância não encontrada no banco: " + instanceName));
+                    .orElseThrow(() -> new IllegalArgumentException("Instancia nao encontrada no banco: " + instanceName));
 
             String userText = extractUserText(msgObject);
             String mediaUrl = extractAndSaveMedia(instanceName, account.getEvolutionApiKey(), msgObject);
@@ -80,7 +127,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             if (finalContent.isEmpty()) return;
 
-            log.info("Mensagem WhatsApp recebida -> De: {}, Conteúdo: '{}'", userPhoneNumber, finalContent);
+            log.info("Mensagem WhatsApp recebida -> De: {}, Conteudo: '{}'", userPhoneNumber, finalContent);
 
             userPhoneNumber = userPhoneNumber.split("@")[0];
             UUID sessionId = UUID.nameUUIDFromBytes(userPhoneNumber.getBytes());
@@ -166,10 +213,9 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private String extractAndSaveMedia(String instanceName, String apiKey, Map<String, Object> msgObject) {
+    private String extractAndSaveMedia(String instanceName, String apiKey, Map msgObject) {
         try {
-            Map<String, Object> messageContent = (Map<String, Object>) msgObject.get("message");
+            Map messageContent = (Map) msgObject.get("message");
             if (messageContent == null) return null;
 
             String mediaType = null;
@@ -192,81 +238,72 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.set("apikey", apiKey);
 
-            Map<String, Object> body = new HashMap<>();
+            Map body = new HashMap();
             body.put("message", msgObject);
 
-            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-            ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
+            HttpEntity request = new HttpEntity(body, headers);
+            ResponseEntity response = restTemplate.postForEntity(url, request, Map.class);
 
-            if (response.getBody() != null && response.getBody().containsKey("base64")) {
-                String base64Data = (String) response.getBody().get("base64");
+            Map responseBody = (Map) response.getBody();
+            if (responseBody != null && responseBody.containsKey("base64")) {
+                String base64Data = (String) responseBody.get("base64");
                 if (base64Data == null || base64Data.isBlank()) return null;
 
                 if (base64Data.contains(",")) base64Data = base64Data.split(",")[1];
 
-                byte[] decodedBytes = java.util.Base64.getDecoder().decode(base64Data);
-
+                byte[] decodedBytes = Base64.getDecoder().decode(base64Data);
                 File dir = new File("uploads");
                 if (!dir.exists()) dir.mkdirs();
 
                 String fileName = "wa_" + UUID.randomUUID().toString().substring(0, 8) + extension;
                 File file = new File(dir, fileName);
 
-                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(file)) {
+                try (FileOutputStream fos = new FileOutputStream(file)) {
                     fos.write(decodedBytes);
                 }
 
                 return "http://localhost:8080/uploads/" + fileName;
             }
         } catch (Exception e) {
-            log.error("Erro ao tentar baixar mídia do WhatsApp", e);
+            log.error("Erro ao tentar baixar midia do WhatsApp", e);
         }
         return null;
     }
 
-    @SuppressWarnings("unchecked")
-    private String extractPhoneNumber(Map<String, Object> data, Map<String, Object> msgObject) {
-        if (data.containsKey("key")) return (String) ((Map<String, Object>) data.get("key")).get("remoteJid");
-        else if (msgObject.containsKey("key")) return (String) ((Map<String, Object>) msgObject.get("key")).get("remoteJid");
+    private String extractPhoneNumber(Map data, Map msgObject) {
+        if (data.containsKey("key")) return (String) ((Map) data.get("key")).get("remoteJid");
+        else if (msgObject.containsKey("key")) return (String) ((Map) msgObject.get("key")).get("remoteJid");
         return (String) data.get("remoteJid");
     }
 
-    @SuppressWarnings("unchecked")
-    private Boolean extractFromMe(Map<String, Object> data, Map<String, Object> msgObject) {
-        if (data.containsKey("key")) return (Boolean) ((Map<String, Object>) data.get("key")).get("fromMe");
-        else if (msgObject.containsKey("key")) return (Boolean) ((Map<String, Object>) msgObject.get("key")).get("fromMe");
+    private Boolean extractFromMe(Map data, Map msgObject) {
+        if (data.containsKey("key")) return (Boolean) ((Map) data.get("key")).get("fromMe");
+        else if (msgObject.containsKey("key")) return (Boolean) ((Map) msgObject.get("key")).get("fromMe");
         return (Boolean) data.get("fromMe");
     }
 
-    @SuppressWarnings("unchecked")
-    private String extractUserText(Map<String, Object> msgObject) {
+    private String extractUserText(Map msgObject) {
         if (msgObject == null) return null;
-
-        Map<String, Object> messageContent = msgObject;
+        Map messageContent = msgObject;
         if (msgObject.containsKey("message") && msgObject.get("message") instanceof Map) {
-            messageContent = (Map<String, Object>) msgObject.get("message");
+            messageContent = (Map) msgObject.get("message");
         }
-
         if (messageContent.containsKey("conversation")) return (String) messageContent.get("conversation");
-
         if (messageContent.containsKey("extendedTextMessage")) {
             Object extText = messageContent.get("extendedTextMessage");
-            if (extText instanceof Map) return (String) ((Map<String, Object>) extText).get("text");
+            if (extText instanceof Map) return (String) ((Map) extText).get("text");
         }
-
         if (messageContent.containsKey("imageMessage")) {
             Object imgMsg = messageContent.get("imageMessage");
-            if (imgMsg instanceof Map && ((Map<?, ?>) imgMsg).containsKey("caption")) return (String) ((Map<String, Object>) imgMsg).get("caption");
+            if (imgMsg instanceof Map && ((Map) imgMsg).containsKey("caption")) return (String) ((Map) imgMsg).get("caption");
         }
-
         if (messageContent.containsKey("videoMessage")) {
             Object vidMsg = messageContent.get("videoMessage");
-            if (vidMsg instanceof Map && ((Map<?, ?>) vidMsg).containsKey("caption")) return (String) ((Map<String, Object>) vidMsg).get("caption");
+            if (vidMsg instanceof Map && ((Map) vidMsg).containsKey("caption")) return (String) ((Map) vidMsg).get("caption");
         }
-
         if (messageContent.containsKey("documentMessage")) {
             Object docMsg = messageContent.get("documentMessage");
-            if (docMsg instanceof Map && ((Map<?, ?>) docMsg).containsKey("caption")) return (String) ((Map<String, Object>) docMsg).get("caption");
+            if (docMsg instanceof Map && ((Map) docMsg).containsKey("caption")) return (String) ((Map) docMsg).get("caption");
         }
 
         return null;

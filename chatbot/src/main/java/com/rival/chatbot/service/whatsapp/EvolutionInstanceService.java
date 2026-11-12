@@ -1,5 +1,6 @@
 package com.rival.chatbot.service.whatsapp;
 
+import java.util.Map;
 import java.util.UUID;
 
 public interface EvolutionInstanceService {
@@ -8,4 +9,5 @@ public interface EvolutionInstanceService {
     void activateBot(UUID tenantId);
     void logoutInstance(UUID tenantId);
     String getPairingCode(UUID tenantId, String phoneNumber);
+    Map<String, Object> getConnectionStatus(UUID tenantId);
 }
